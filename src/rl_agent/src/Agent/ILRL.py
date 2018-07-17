@@ -81,6 +81,7 @@ class RolloutWorker:
         """Resets the 'i'-th rollout environment
         """
         # obs =
+        pass
 
     def reset_all_rollouts(self):
         """Resets all 'rollout_batch_size' rollout workers
