@@ -112,7 +112,7 @@ class RolloutWorker:
         while not rospy.is_shutdown():
             # Instead of doing this, I want to get the system_state from ModelT42
             reset_flag = rospy.get_param('/RLAgent/reset')
-            system_state =
+            
 
             if reset_flag:
                 if agent.current_action is not None:  #
