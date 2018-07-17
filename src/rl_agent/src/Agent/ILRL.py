@@ -80,7 +80,7 @@ class RolloutWorker:
     def reset_rollout(self, i):
         """Resets the 'i'-th rollout environment
         """
-        obs =
+        # obs =
 
     def reset_all_rollouts(self):
         """Resets all 'rollout_batch_size' rollout workers
@@ -112,7 +112,7 @@ class RolloutWorker:
         while not rospy.is_shutdown():
             # Instead of doing this, I want to get the system_state from ModelT42
             reset_flag = rospy.get_param('/RLAgent/reset')
-            
+
 
             if reset_flag:
                 if agent.current_action is not None:  #
