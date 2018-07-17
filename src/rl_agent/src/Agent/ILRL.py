@@ -13,7 +13,7 @@ import datetime
 from rl_msgs.msg import RLStateReward, RLAction
 from std_msgs.msg import Float32MultiArray, Int32
 
-from util import store_args
+from util import store_args, convert_episode_to_batch_major
 import config
 
 class RolloutWorker:
@@ -27,12 +27,6 @@ class RolloutWorker:
         :param rollout_batch_size (int): the number of parallel rollouts that should be used
         """
         self.reset_all_rollouts()
-        self.current_state = None
-        self.current_reward = None
-        self.current_action = None
-        self.Q = None
-        self.terminated = False
-        self.system_state = None
 
         rospy.Subscriber('system/state', Int32, self.system_state_callback)
         rospy.Subscriber('rl_env/rl_state_reward', RLStateReward, self.state_reward_callback)
@@ -80,8 +74,12 @@ class RolloutWorker:
     def reset_rollout(self, i):
         """Resets the 'i'-th rollout environment
         """
-        # obs =
-        pass
+        self.current_action = None
+        self.current_state = None
+        self.current_reward = 0
+        self.Q = None
+        self.terminated = False
+        self.system_state = None
 
     def reset_all_rollouts(self):
         """Resets all 'rollout_batch_size' rollout workers
@@ -96,10 +94,6 @@ class RolloutWorker:
          """
         self.reset_all_rollouts()
         rate = rospy.Rate(5)  # publishes action every .2 seconds
-
-        # I think this init thing should be handled in reset_all_rollouts() or something.
-        # Init observations
-        o = np.empty([self.rollout_batch_size, self.dims['o']], np.float32)
 
         # Set /RLAgent/reset true
         rospy.set_param('/RLAgent/reset', "true")
@@ -117,9 +111,11 @@ class RolloutWorker:
 
             if reset_flag:
                 if agent.current_action is not None:  #
-
+                    print("self.current_state dime : {}, self.current_action dim : {}, self.current_reward.dim : {}".format(
+                        self.current_state, self.current_action, self.current_reward
+                    ))
                     obs.append(self.current_state.copy())
-                    acts.append(self.current_action.copy()))
+                    acts.append(self.current_action.copy())
                     rewards.append(self.current_reward.copy())
                     if self.compute_Q:
                         Qs.append(self.Q)
@@ -141,7 +137,7 @@ class RolloutWorker:
             if self.system_state == 3:
                 print("System state is ready...return episode, starting a new episode")
                 episode['o'], episode['u'], episode['r'] = obs, acts, rewards
-                return episode
+                return convert_episode_to_batch_major(episode)
             rate.sleep()
 
 
@@ -149,7 +145,7 @@ def train(policy, rollout_worker, n_epochs):
 
     for epoch in range(n_epochs):
         episode = rollout_worker.generate_rollouts()
-        #policy.store_episode(episode)
+        policy.store_episode(episode)
 
 
 
