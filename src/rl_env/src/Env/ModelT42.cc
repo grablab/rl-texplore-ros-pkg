@@ -64,8 +64,8 @@ void ModelT42::callbackGripperLoad(std_msgs::Float32MultiArray msg) {
     float l_load, r_load;
     l_load = msg.data[0];
     r_load = msg.data[1];
-    cout << "callbackGripperLoad is called l_load and r_load values are : " << l_load << " " << r_load << endl;
-    cout << "callbackGripperLoad is called l_load and r_load values are : " << fabs(l_load) << " " << fabs(r_load) << endl;
+//    cout << "callbackGripperLoad is called l_load and r_load values are : " << l_load << " " << r_load << endl;
+//    cout << "callbackGripperLoad is called l_load and r_load values are : " << fabs(l_load) << " " << fabs(r_load) << endl;
     if (fabs(l_load) > 900.0 || fabs(r_load) > 900.0) {
         // reset because
         cout << "load is too high" << endl;
@@ -258,6 +258,9 @@ void ModelT42::reset() {
     applyCount = 0;
 
     bool resetFlag = false;
+//    cout << "Printing resetFlag: " << resetFlag << endl;
+//    ros::param::get("/RLAgent/reset", resetFlag);
+//    cout << "Printing resetFlag: " << resetFlag << endl;
     ros::param::set("/RLAgent/reset", resetFlag);
     numRollouts += 1;
 
@@ -283,15 +286,15 @@ void ModelT42::reset() {
 
     // wait for system mode to be "ready"
     while (systemState != 3 and counter < 600) {
-        cout << "debuggin 3" << endl;
+//        cout << "debuggin 3" << endl;
         ros::spinOnce();
-        cout << "debuggin 3 after spinOnce()" << endl;
+//        cout << "debuggin 3 after spinOnce()" << endl;
         r.sleep();
-        cout << "debuggin 3 after sleep()" << endl;
+//        cout << "debuggin 3 after sleep()" << endl;
         counter++;
     }
     if (systemState != 3) {
-        cout << "debugging 4" << endl;
+//        cout << "debugging 4" << endl;
         throw std::runtime_error("[ModelT42-RLEnv] Failed to get ready");
     }
 
