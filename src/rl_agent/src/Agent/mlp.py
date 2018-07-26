@@ -1,8 +1,12 @@
 import numpy as np
 import tensorflow as tf
 from collections import OrderedDict
-from replay_buffer import PrioritizedReplayBuffer
+#from replay_buffer import PrioritizedReplayBuffer
+from tensorflow.contrib.staging import StagingArea
 from replay_buffer import ReplayBuffer
+from util import flatten_grads, import_function
+
+from mpi_adam import MpiAdam
 
 ACT_FNS = {'relu': tf.nn.relu}
 
@@ -10,15 +14,19 @@ def dims_to_shapes(input_dims):
     return {key: tuple([val]) if val > 0 else tuple() for key, val in input_dims.items()}
 
 class MLP(object):
-    @store_args
-    def __init__(self, num_states=14, num_actions=9, n_layers=4, hidden_units=[100, 60, 40, 20], act_fn='relu',
-                 model_name='il_policy', batch_size=20, action_l2=1.0, clip_return=None, clip_pos_returns=None,
-                 bc_loss=True, q_filter=False, save_path=MODEL_SAVE_PATH):
+    def __init__(self, num_states=14, num_actions=9, buffer_size=10000, n_layers=4, hidden_units=[100, 60, 40, 20], act_fn='relu',
+                 model_name='il_policy', polyak=0.5, batch_size=40, demo_batch_size=30, action_l2=1.0, clip_return=None,
+                 clip_pos_returns=None, bc_loss=True, q_filter=False, gamma=None, save_path=None, reuse=False):
         # store args
         self.num_states = num_states; self.num_actions = num_actions; self.n_layers = n_layers
         self.hidden_units = hidden_units; self.model_name = model_name; self.save_path = save_path
-        self.batch_size = batch_size; self.clip_return = clip_return; self.clip_pos_returns = clip_pos_returns
-        self.bc_loss = bc_loss; self.q_filter = q_filter; self.action_l2 = action_l2
+        self.batch_size = batch_size; self.demo_batch_size= demo_batch_size; self.clip_return = clip_return;
+        self.clip_pos_returns = clip_pos_returns
+        self.bc_loss = bc_loss; self.q_filter = q_filter; self.action_l2 = action_l2; self.polyak=polyak
+        self.gamma = gamma; self.buffer_size = buffer_size
+        self.Q_lr = 0.01; self.pi_lr = 0.01
+
+        self.rollout_batch_size = 1
 
         if self.clip_return is None:
             self.clip_return = np.inf
@@ -26,7 +34,7 @@ class MLP(object):
         self.act_fn = ACT_FNS.get(act_fn, None)
         self.input_dims = {'o' : num_states, 'u' : num_actions, 'r' : 1}
         self.scope = 'mlp'
-        self.network_class = 'baselines.her.ActorCritic' # I need to check if this works with import function thing.
+        self.network_class = 'actor_critic:ActorCritic'   # I need to check if this works with import function thing.
         self.create_actor_critic = import_function(self.network_class)
 
         self.sess, self.saver = None, None
@@ -40,16 +48,16 @@ class MLP(object):
         self.dimu = self.input_dims['u']
 
         self.lambda1 = 0.001
-        self.lambda2 - 0.0078
-
+        self.lambda2 = 0.0078
 
         # Prepare staging area for feeding data to the model.
         stage_shapes = OrderedDict()
         for key in sorted(self.input_dims.keys()):
             if key.startswith('info_'):
                 continue
-            stage_shapes[key] = (None, *input_shapes[key])
-        for key in ['o', 'g']:
+            print('input_shapes[key]: {}'.format(input_shapes[key]))
+            stage_shapes[key] = (None, input_shapes[key][0])
+        for key in ['o']:
             stage_shapes[key + '_2'] = stage_shapes[key]
         stage_shapes['r'] = (None,)
         self.stage_shapes = stage_shapes
@@ -63,7 +71,7 @@ class MLP(object):
                 tf.placeholder(tf.float32, shape=shape) for shape in self.stage_shapes.values()]
             self.stage_op = self.staging_tf.put(self.buffer_ph_tf)
 
-            self._create_network()
+            self._create_network(reuse=reuse)
 
         # Configure the replay buffer
         ''' This is for python3.x
@@ -94,7 +102,7 @@ class MLP(object):
 
         # I don't think I need demoBuffer for now -> This is necessary if I want to use self.bc_loss = True
 
-    def _create_network(self):
+    def _create_network(self, reuse):
         #ToDo: Read logger.py in baselines in OpenAI github repo
         #logger.info("Creating a DDPG agent with action space %d x %s..." % (self.dimu, self.max_u))
         print("Creating a simple DDPG agent..")
@@ -114,20 +122,20 @@ class MLP(object):
         mask = np.concatenate((np.zeros(self.batch_size - self.demo_batch_size), np.ones(self.demo_batch_size)), axis=0)
 
         # networks
-        print("printing self.__dict__: {}".format(self.__dict__))
+        #print("printing self.__dict__: {}".format(self.__dict__))
         with tf.variable_scope('main') as vs:
             if reuse: #TODO: Understand what this reuse thing does.
                 vs.reuse_variables()
-            self.main = self.create_actor_critic(batch_tf, net_type='main', **self.__dict__)
+            self.main = self.create_actor_critic(batch_tf, dimo=self.input_dims['o'], dimu=self.input_dims['u'], hidden=10, layers=3)
             vs.reuse_variables()
-            #TODO Finish this part (after taking a nap)
+
         with tf.variable_scope('target') as vs:
             if reuse:
                 vs.reuse_variables()
             target_batch_tf = batch_tf.copy()
             target_batch_tf['o'] = batch_tf['o_2']
             self.target = self.create_actor_critic(
-                target_batch_tf, net_type='target', **self.__dict__)
+                target_batch_tf, dimo=self.input_dims['o'], dimu=self.input_dims['u'], hidden=10, layers=3)
             vs.reuse_variables()
         assert len(self._vars("main")) == len(self._vars("target"))
 
@@ -137,7 +145,6 @@ class MLP(object):
         target_tf = tf.clip_by_value(batch_tf['r'] + self.gamma * target_Q_pi_tf, clip_range[0], clip_range[1])  # y = r + gamma*Q(pi)
         self.Q_loss_tf = tf.reduce_mean(tf.square(tf.stop_gradient(target_tf) - self.main.Q_tf))  # (y-Q(critic))^2
 
-        #TODo: register lambda1, stuff, bc_loss etc.
         # add bc_loss and q_filter stuff here
         if self.bc_loss == 1 and self.q_filter == 1:
             # where is the demonstrator action better than actor action according to the critic?
@@ -156,24 +163,85 @@ class MLP(object):
             self.pi_loss_tf += self.lambda2 * self.cloning_loss_tf
         else:
             self.pi_loss_tf = -tf.reduce_mean(self.main.Q_pi_tf)
-            self.pi_loss_tf += self.action_l2 * tf.reduce_mean(tf.square(self.main.pi_tf / self.max_u))
+            self.pi_loss_tf += self.action_l2 * tf.reduce_mean(tf.square(self.main.pi_tf))
             self.cloning_loss_tf = tf.reduce_sum(tf.square(self.main.pi_tf - batch_tf['u']))  # random
 
         # TODO Add grads tf
-
+        Q_grads_tf = tf.gradients(self.Q_loss_tf, self._vars('main/Q'))
+        pi_grads_tf = tf.gradients(self.pi_loss_tf, self._vars('main/pi'))
+        assert len(self._vars('main/Q')) == len(Q_grads_tf)
+        assert len(self._vars('main/pi')) == len(pi_grads_tf)
+        self.Q_grads_vars_tf = zip(Q_grads_tf, self._vars('main/Q'))
+        self.pi_grads_vars_tf = zip(pi_grads_tf, self._vars('main/pi'))
+        self.Q_grad_tf = flatten_grads(grads=Q_grads_tf, var_list=self._vars('main/Q'))
+        self.pi_grad_tf = flatten_grads(grads=pi_grads_tf, var_list=self._vars('main/pi'))
 
         # TODO Add optimizers
+        self.Q_adam = MpiAdam(self._vars('main/Q'), scale_grad_by_procs=False)
+        self.pi_adam = MpiAdam(self._vars('main/pi'), scale_grad_by_procs=False)
+
+        # polyak averaging
+        self.main_vars = self._vars('main/Q') + self._vars('main/pi')
+        self.target_vars = self._vars('target/Q') + self._vars('target/pi')
+        # self.stats_vars = self._global_vars('o_stats') + self._global_vars('g_stats')
+        self.init_target_net_op = list(
+            map(lambda v: v[0].assign(v[1]), zip(self.target_vars, self.main_vars)))
+        self.update_target_net_op = list(
+            map(lambda v: v[0].assign(self.polyak * v[0] + (1. - self.polyak) * v[1]),
+                zip(self.target_vars, self.main_vars)))
+
+        # init all variables
+        tf.variables_initializer(self._global_vars('')).run()
+        self._sync_optimizers()
+        self._init_target_net()
+
+    def _sync_optimizers(self):
+        self.Q_adam.sync()
+        self.pi_adam.sync()
+
+    def _init_target_net(self):
+        self.sess.run(self.init_target_net_op)
 
     def _vars(self, scope):
         res = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.scope + '/' + scope)
         assert len(res) > 0
         return res
 
+    def _global_vars(self, scope):
+        res = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=self.scope + '/' + scope)
+        return res
+
+    def store_episode(self, episode_batch, update_stats=True):
+        self.buffer.store_episode(episode_batch)
+
     def get_actions(self, o, noise_eps=0., random_eps=0., use_target_net=False, compute_Q=False):
         # o = self._preprocess_o(o)
-        # TODO: I need to check how this is done.
         policy = self.target if use_target_net else self.main
-        pass
+        # values to compute
+        vals = [policy.pi_tf]
+        if compute_Q:
+            vals += [policy.Q_pi_tf]
+        # feed
+        print("dimension of o in get_actions: {}".format(np.array(o)))
+        feed = {
+            policy.o_tf: np.array(o).reshape(-1, self.dimo),
+            policy.u_tf: np.zeros((1, self.dimu), dtype=np.float32)
+        }
+        ret = self.sess.run(vals, feed_dict=feed)
+        # action post processing
+        u = ret[0]
+        # add noise for exploratin
+        ###
+
+        if u.shape[0] == 1:
+            u = u[0]
+        u = u.copy()
+        ret[0] = u
+
+        if len(ret) == 1:
+            return ret[0]
+        else:
+            return ret
 
     def store_episodes(self):
         pass
@@ -182,6 +250,8 @@ class MLP(object):
         if batch is None:
             batch = self.sample_batch()
         assert len(self.buffer_ph_tf) == len(batch)
+        # TODO Fix bug here
+        # Just print everything!!
         self.sess.run(self.stage_op, feed_dict=dict(zip(self.buffer_ph_tf, batch)))
 
     def sample_batch(self):
@@ -191,7 +261,8 @@ class MLP(object):
         else:
             transitions = self.buffer.sample(self.batch_size)
 
-        return transitions
+        transitions_batch = [transitions[key] for key in self.stage_shapes.keys()]
+        return transitions_batch
 
     def update_target_net(self):
         self.sess.run(self.update_target_net_op)
@@ -200,7 +271,7 @@ class MLP(object):
         if stage:
             self.stage_batch()
         critic_loss, actor_loss, Q_grad, pi_grad = self._grads()
-        self._update(Q_grad, pi_grad)}
+        self._update(Q_grad, pi_grad)
         return critic_loss, actor_loss
 
 

@@ -17,6 +17,8 @@ class ActorCritic:
             hidden (int): number of hidden units that should be used in hidden layers
             layers (int): number of hidden layers
         """
+        self.dimu = dimu; self.hidden = hidden; self.layers = layers
+
         self.o_tf = inputs_tf['o']
         self.u_tf = inputs_tf['u']
 
@@ -32,9 +34,9 @@ class ActorCritic:
             self.pi_tf = nn(input_pi, [self.hidden] * self.layers + [self.dimu])
         with tf.variable_scope('Q'):
             # for policy training
-            input_Q = tf.concat(axis=1, values=[o, self.pi_tf]) #actions from the policy
+            input_Q = tf.concat(axis=1, values=[self.o_tf, self.pi_tf]) #actions from the policy
             self.Q_pi_tf = nn(input_Q, [self.hidden] * self.layers + [1])
             # for critic training
-            input_Q = tf.concat(axis=1, values=[o, self.u_tf]) #actions from the buffer
+            input_Q = tf.concat(axis=1, values=[self.o_tf, self.u_tf]) #actions from the buffer
             self._input_Q = input_Q  # exposed for tests
             self.Q_tf = nn(input_Q, [self.hidden] * self.layers + [1], reuse=True)

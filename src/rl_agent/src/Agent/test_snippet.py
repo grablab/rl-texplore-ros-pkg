@@ -89,9 +89,12 @@ class RolloutWorker:
                                                     random_eps=self.random_eps if not self.exploit else 0.,
                                                     use_target_net=self.use_target_net)
             if self.compute_Q:
-                self.current_action, self.Q = policy_output
+                action_vec, self.Q = policy_output
+                self.current_action = np.argmax(action_vec)
             else:
-                self.current_action = policy_output
+                print("policy_output: {}".format(policy_output)) # 2 = left
+                action_vec = policy_output
+                self.current_action = np.argmax(action_vec)
         else:
             return
 
@@ -173,4 +176,4 @@ if __name__ == '__main__':
     policy = config.configure_mlp(dims=dims, model_name=model_name, model_save_path=MODEL_SAVE_PATH)
     print(policy)
     rollout_worker = RolloutWorker(policy, dims)
-    train(policy=policy, rollout_worker=rollout_worker, n_epochs=n_epochs)
+    train(policy=policy, rollout_worker=rollout_worker, n_epochs=n_epochs, n_batches=5)

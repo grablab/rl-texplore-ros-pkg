@@ -4,6 +4,8 @@ import tensorflow as tf
 from replay_buffer import ReplayBuffer
 from her import make_sample_her_transitions
 
+from mlp import MLP
+
 DEFAULT_PARAMS = {
     # env
     'max_u': 1.,  # max absolute value of actions on different coordinates
@@ -88,6 +90,21 @@ def prepare_params(kwargs):
     kwargs['ddpg_params'] = ddpg_params
 
     return kwargs
+
+
+def configure_mlp(dims, model_name, model_save_path):
+    '''
+    def __init__(self, num_states=14, num_actions=9, n_layers=4, hidden_units=[100, 60, 40, 20], act_fn='relu',
+                 model_name='il_policy', polyak=0.5, batch_size=20, action_l2=1.0, clip_return=None, clip_pos_returns=None,
+                 bc_loss=True, q_filter=False, save_path=MODEL_SAVE_PATH):
+    '''
+    num_states = dims['o']
+    num_actions = dims['u']
+    gamma = 1 - 1.0/60
+
+    policy = MLP(num_states=num_states, num_actions=num_actions, bc_loss=False, gamma=gamma, model_name=model_name,
+                 save_path=model_save_path)
+    return policy
 
 def configure_ddpg(dims, params, bc_loss, q_filter, num_demo, reuse=False, use_mpi=True, clip_return=True):
     sample_her_transitions = configure_her(params)
@@ -241,7 +258,7 @@ class ILPolicy:
         action = self.sess.run(self.y_pred_, feed_dict={self.x_: obs})
         return np.argmax(action, axis=-1)
 
-def configure_mlp(dims, model_name, model_save_path):
+def configure_simple_mlp(dims, model_name, model_save_path):
     #rollout_batch_size = params['rollout_batch_size']
     #mlp_params = params['mlp_params']
     #policy = MLP(**mlp_params)

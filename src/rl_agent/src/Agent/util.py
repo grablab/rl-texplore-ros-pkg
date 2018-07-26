@@ -4,9 +4,16 @@ import sys
 import importlib
 import inspect
 import functools
+import tf_util as U
 
 import tensorflow as tf
 import numpy as np
+
+def import_function(spec):
+    mod_name, fn_name = spec.split(':')
+    module = importlib.import_module(mod_name)
+    fn = getattr(module, fn_name)
+    return fn
 
 def store_args(method):
     """Stores provided method args as instance attributes.
@@ -33,6 +40,14 @@ def store_args(method):
         return method(*positional_args, **keyword_args)
 
     return wrapper
+
+
+def flatten_grads(var_list, grads):
+    """Flattens a variables and their gradients.
+    """
+    return tf.concat([tf.reshape(grad, [U.numel(v)])
+                      for (v, grad) in zip(var_list, grads)], 0)
+
 
 def convert_episode_to_batch_major(episode):
     """Converts an episode to have the batch dimension in the major (first)

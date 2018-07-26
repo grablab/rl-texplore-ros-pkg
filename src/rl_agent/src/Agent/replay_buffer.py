@@ -22,7 +22,7 @@ class ReplayBuffer:
         :param batch_size: batch_size for training
         :return: transitions data (o, o_2, u, r)
         '''
-        obses_t, actions, rewards, obses_tp1 = [], [], [], [], []
+        obses_t, actions, rewards, obses_tp1 = [], [], [], []
         for i in idxes:
             data = self._storage[i]
             obs_t, action, reward, obs_tp1 = data
@@ -31,7 +31,6 @@ class ReplayBuffer:
             rewards.append(reward)
             obses_tp1.append(np.array(obs_tp1, copy=False))
 
-        keys = ['o', 'o_2', 'r', 'r']
         transitions = {'o': np.array(obses_t), 'o_2': np.array(obses_tp1),
                        'u': np.array(actions), 'r': np.array(rewards)}
         return transitions
