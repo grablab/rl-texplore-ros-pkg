@@ -6,6 +6,7 @@ from __future__ import print_function
 import rospy
 import tensorflow as tf
 import numpy as np
+from collections import deque
 import os
 import math
 import datetime
@@ -49,6 +50,7 @@ class RolloutWorker:
         self.Q = None
         self.terminated = False
         self.system_state = None
+        self.Q_history = deque()
 
     def reset_all_rollouts(self):
         """Resets all 'rollout_batch_size' rollout workers
@@ -151,19 +153,27 @@ class RolloutWorker:
             if self.system_state == 3 and len(obs) > 0:
                 print("System state is ready...return episode, starting a new episode")
                 episode['o'], episode['u'], episode['r'] = obs, acts, rewards
-                return convert_episode_to_batch_major(episode)
+                if self.compute_Q:
+                    return convert_episode_to_batch_major(episode), np.mean(Qs)
+                else:
+                    return convert_episode_to_batch_major(episode)
             rate.sleep()
 
 
 def train(policy, rollout_worker, n_epochs, n_batches):
-
+    Q_history = deque()
     for epoch in range(n_epochs):
         print('ok')
-        episode = rollout_worker.generate_rollouts()
+        if rollout_worker.compute_Q:
+            episode, mean_Q = rollout_worker.generate_rollouts()
+        else:
+            episode = rollout_worker.generate_rollouts()
         # TODO Check how store_episode will go
         policy.store_episode(episode)
-        for _ in range(n_batches): # update q-values
-            policy.train()
+        for i in range(n_batches): # update q-values
+            critic_loss, actor_loss = policy.train()
+            print("n_batch: {}, critic_loss: {}, actor_loss: {}".format(i, critic_loss, actor_loss))
+        print("Mean Q-value: {}".format(mean_Q))
         policy.update_target_net() # update the target net less frequently
 
 
@@ -175,5 +185,5 @@ if __name__ == '__main__':
     n_epochs = 100
     policy = config.configure_mlp(dims=dims, model_name=model_name, model_save_path=MODEL_SAVE_PATH)
     print(policy)
-    rollout_worker = RolloutWorker(policy, dims)
-    train(policy=policy, rollout_worker=rollout_worker, n_epochs=n_epochs, n_batches=5)
+    rollout_worker = RolloutWorker(policy, dims, use_target_net=True, compute_Q=True)
+    train(policy=policy, rollout_worker=rollout_worker, n_epochs=n_epochs, n_batches=100)

@@ -174,13 +174,14 @@ float ModelT42::apply(int action) {
     // Make sure that apply_count is reset in the reset function too tho.
     applyCount += 1;
     cout << "ModelT42::applyCount is " << applyCount << endl;
+
     if (stuck_state) {
         cout << "stuck_state is 1...reseting the env.............." << endl;
         reset();
         stuck_state = false;
         return 0;
     }
-    if (reachedEnd) {
+    if (reachedEnd || applyCount > 60) {
         reset();
         return 0;
     }

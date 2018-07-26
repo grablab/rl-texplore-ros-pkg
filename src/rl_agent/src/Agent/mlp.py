@@ -39,9 +39,6 @@ class MLP(object):
 
         self.sess, self.saver = None, None
 
-        # Do I need this? -> Check what self.network_class is.
-        #self.create_actor_critic = import_function(self.network_class)
-
         input_shapes = dims_to_shapes(self.input_dims)
         self.dimo = self.input_dims['o']
         self.dimr = self.input_dims['r']
@@ -242,9 +239,6 @@ class MLP(object):
             return ret[0]
         else:
             return ret
-
-    def store_episodes(self):
-        pass
 
     def stage_batch(self, batch=None):
         if batch is None:
