@@ -18,6 +18,8 @@ class MLP(object):
                  model_name='il_policy', polyak=0.5, batch_size=40, demo_batch_size=30, action_l2=1.0, clip_return=None,
                  clip_pos_returns=None, bc_loss=True, q_filter=False, gamma=None, save_path=None, reuse=False):
         # store args
+        self.checkpoint_path = "/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/results/il_policy"
+        self.restore = True
         self.num_states = num_states; self.num_actions = num_actions; self.n_layers = n_layers
         self.hidden_units = hidden_units; self.model_name = model_name; self.save_path = save_path
         self.batch_size = batch_size; self.demo_batch_size= demo_batch_size; self.clip_return = clip_return;
@@ -37,7 +39,7 @@ class MLP(object):
         self.network_class = 'actor_critic:ActorCritic'   # I need to check if this works with import function thing.
         self.create_actor_critic = import_function(self.network_class)
 
-        self.sess, self.saver = None, None
+        self.sess = None
 
         input_shapes = dims_to_shapes(self.input_dims)
         self.dimo = self.input_dims['o']
@@ -70,6 +72,12 @@ class MLP(object):
 
             self._create_network(reuse=reuse)
 
+        self.saver = tf.train.Saver()
+
+        if self.restore:
+            pi_var_list = self._vars("main/pi")
+            self._restore(pi_var_list, self.checkpoint_path)
+
         # Configure the replay buffer
         ''' This is for python3.x
         buffer_shapes = {key: (self.T if key != 'o' else self.T + 1, *input_shapes[key])
@@ -98,6 +106,8 @@ class MLP(object):
         #self.buffer = PrioritizedReplayBuffer(buffer_shapes, )
 
         # I don't think I need demoBuffer for now -> This is necessary if I want to use self.bc_loss = True
+
+
 
     def _create_network(self, reuse):
         #ToDo: Read logger.py in baselines in OpenAI github repo
@@ -191,6 +201,12 @@ class MLP(object):
         tf.variables_initializer(self._global_vars('')).run()
         self._sync_optimizers()
         self._init_target_net()
+
+
+
+    def _restore(self, pi_var_list, checkpoint_path):
+        saver = tf.train.Saver(var_list=pi_var_list)
+        saver.restore(self.sess, checkpoint_path)
 
     def _sync_optimizers(self):
         self.Q_adam.sync()

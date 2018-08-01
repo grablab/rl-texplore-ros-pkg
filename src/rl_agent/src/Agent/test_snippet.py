@@ -162,6 +162,7 @@ class RolloutWorker:
 
 def train(policy, rollout_worker, n_epochs, n_batches):
     Q_history = deque()
+    q_hist, critic_loss_hist, actor_loss_hist = [], [], []
     for epoch in range(n_epochs):
         print('ok')
         if rollout_worker.compute_Q:
@@ -174,7 +175,13 @@ def train(policy, rollout_worker, n_epochs, n_batches):
             critic_loss, actor_loss = policy.train()
             print("n_batch: {}, critic_loss: {}, actor_loss: {}".format(i, critic_loss, actor_loss))
         print("Mean Q-value: {}".format(mean_Q))
+        q_hist.append(mean_Q)
+        critic_loss_hist.append(critic_loss)
+        actor_loss_hist.append(actor_loss)
         policy.update_target_net() # update the target net less frequently
+        np.save('/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/results/q_val.npy', np.array(q_hist))
+        np.save('/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/results/cri_loss.npy', np.array(critic_loss_hist))
+        np.save('/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/results/actor_loss.npy', np.array(actor_loss_hist))
 
 
 if __name__ == '__main__':
@@ -182,7 +189,7 @@ if __name__ == '__main__':
     rospy.loginfo('started RLAgent node')
     dims = {'o': 9, 'u': 9}
     model_name = 'Jun2714152018_eps1_Jun2714312018_eps1_Jul816002018_eps1'
-    n_epochs = 100
+    n_epochs = 100000
     policy = config.configure_mlp(dims=dims, model_name=model_name, model_save_path=MODEL_SAVE_PATH)
     print(policy)
     rollout_worker = RolloutWorker(policy, dims, use_target_net=True, compute_Q=True)
