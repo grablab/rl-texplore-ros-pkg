@@ -7,6 +7,7 @@ from replay_buffer import ReplayBuffer
 from util import flatten_grads, import_function
 
 from mpi_adam import MpiAdam
+import os
 
 ACT_FNS = {'relu': tf.nn.relu}
 
@@ -26,7 +27,7 @@ class MLP(object):
         self.clip_pos_returns = clip_pos_returns
         self.bc_loss = bc_loss; self.q_filter = q_filter; self.action_l2 = action_l2; self.polyak=polyak
         self.gamma = gamma; self.buffer_size = buffer_size
-        self.Q_lr = 0.01; self.pi_lr = 0.01
+        self.Q_lr = 0.0001; self.pi_lr = 0.0001
 
         self.rollout_batch_size = 1
 
@@ -34,7 +35,7 @@ class MLP(object):
             self.clip_return = np.inf
 
         self.act_fn = ACT_FNS.get(act_fn, None)
-        self.input_dims = {'o' : num_states, 'u' : num_actions, 'r' : 1}
+        self.input_dims = {'o': num_states, 'u': num_actions, 'r': 1}
         self.scope = 'mlp'
         self.network_class = 'actor_critic:ActorCritic'   # I need to check if this works with import function thing.
         self.create_actor_critic = import_function(self.network_class)
@@ -108,6 +109,9 @@ class MLP(object):
         # I don't think I need demoBuffer for now -> This is necessary if I want to use self.bc_loss = True
 
 
+    def save_model(self):
+        return self.saver.save(self.sess, os.path.join(self.save_path, self.model_name))
+
 
     def _create_network(self, reuse):
         #ToDo: Read logger.py in baselines in OpenAI github repo
@@ -170,7 +174,8 @@ class MLP(object):
             self.pi_loss_tf += self.lambda2 * self.cloning_loss_tf
         else:
             self.pi_loss_tf = -tf.reduce_mean(self.main.Q_pi_tf)
-            self.pi_loss_tf += self.action_l2 * tf.reduce_mean(tf.square(self.main.pi_tf))
+            self.pi_loss_tf += self.action_l2 * tf.reduce_mean(tf.square(self.main.pi_tf)) # looks like it's just for regularization
+            #TODO How is this^ different from entropy regularization? (See A3C paper for entropy regularization)
             self.cloning_loss_tf = tf.reduce_sum(tf.square(self.main.pi_tf - batch_tf['u']))  # random
 
         # TODO Add grads tf
@@ -235,7 +240,7 @@ class MLP(object):
         if compute_Q:
             vals += [policy.Q_pi_tf]
         # feed
-        print("dimension of o in get_actions: {}".format(np.array(o)))
+        #print("dimension of o in get_actions: {}".format(np.array(o)))
         feed = {
             policy.o_tf: np.array(o).reshape(-1, self.dimo),
             policy.u_tf: np.zeros((1, self.dimu), dtype=np.float32)
@@ -243,25 +248,28 @@ class MLP(object):
         ret = self.sess.run(vals, feed_dict=feed)
         # action post processing
         u = ret[0]
-        # add noise for exploratin
-        ###
-
         if u.shape[0] == 1:
             u = u[0]
         u = u.copy()
         ret[0] = u
 
-        if len(ret) == 1:
-            return ret[0]
+        # exploration
+        if np.random.rand(1) < random_eps:
+            random_act = np.random.randint(0, self.num_actions, 1)
+            act = random_act[0]
         else:
-            return ret
+            act = np.argmax(ret[0])
+
+        print('printing act to see type: {}'.format(act))
+        if len(ret) == 1:
+            return act
+        else:
+            return act, ret[1]
 
     def stage_batch(self, batch=None):
         if batch is None:
             batch = self.sample_batch()
         assert len(self.buffer_ph_tf) == len(batch)
-        # TODO Fix bug here
-        # Just print everything!!
         self.sess.run(self.stage_op, feed_dict=dict(zip(self.buffer_ph_tf, batch)))
 
     def sample_batch(self):
@@ -283,7 +291,6 @@ class MLP(object):
         critic_loss, actor_loss, Q_grad, pi_grad = self._grads()
         self._update(Q_grad, pi_grad)
         return critic_loss, actor_loss
-
 
     def _grads(self):
         # Avoid feed_dict here for performance!

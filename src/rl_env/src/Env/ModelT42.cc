@@ -35,7 +35,7 @@ ModelT42::~ModelT42() { }
 
 void ModelT42::setupNode() {
     sub_vs_vel_ref_ = node_handle_.subscribe("/marker_tracker/image_space_pose_msg",1,&ModelT42::callbackImageSpacePoseMsg, this);
-    sub_sd_sliding_detector = node_handle_.subscribe("/sliding_detector/sliding_detector",6,&ModelT42::callbackSliding, this);
+    sub_sd_sliding_detector = node_handle_.subscribe("/evaluate_policy/evaluate_policy",6,&ModelT42::callbackSliding, this);
     sub_sd_stuck_detector = node_handle_.subscribe("/stuck_detector/stuck_detector",6,&ModelT42::callbackStuck, this);
     sub_system_state = node_handle_.subscribe("/system/state",1,&ModelT42::callbackSystemState, this);
     sub_gripper_load = node_handle_.subscribe("/gripper/load",1,&ModelT42::callbackGripperLoad, this);
@@ -203,7 +203,7 @@ float ModelT42::apply(int action) {
     pub_car_ref.publish(msg);
     std::cout<<"Applying command!"<<std::endl;
 
-    float rew = reward(); // I think I can just do float rew = lastSliding
+    float rew = lastSliding; // reward(); // I think I can just do float rew = lastSliding
     return rew;
 }
 

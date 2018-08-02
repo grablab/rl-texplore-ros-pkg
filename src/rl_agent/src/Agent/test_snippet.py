@@ -18,7 +18,7 @@ from util import store_args, convert_episode_to_batch_major
 import config
 
 NODE = "RLAgent"
-MODE = 'il'  # nfq
+MODE = 'actor_critic_mlp' # 'il'  # nfq
 MODEL_SAVE_PATH = os.path.join(os.environ['HOME'], 'grablab-ros/src/projects/sliding_policies/models/' + MODE + '/')
 ACT_CMDS = ['up', 'down', 'left', 'right', 'left up', 'left down', 'right up', 'right down', 'stop']
 
@@ -85,18 +85,19 @@ class RolloutWorker:
                 return
             self.current_state = self.prepare_s(sr.state)
             self.current_reward = sr.reward
+            print("Current_reward: {}".format(self.current_reward))
             policy_output = self.policy.get_actions(self.current_state,
                                                     compute_Q=self.compute_Q,
                                                     noise_eps=self.noise_eps if not self.exploit else 0.,
                                                     random_eps=self.random_eps if not self.exploit else 0.,
                                                     use_target_net=self.use_target_net)
             if self.compute_Q:
-                action_vec, self.Q = policy_output
-                self.current_action = np.argmax(action_vec)
+                sampled_action, self.Q = policy_output
+                self.current_action = sampled_action # np.argmax(action_vec)
             else:
-                print("policy_output: {}".format(policy_output)) # 2 = left
-                action_vec = policy_output
-                self.current_action = np.argmax(action_vec)
+                #print("policy_output: {}".format(policy_output)) # 2 = left
+                sampled_action = policy_output
+                self.current_action = sampled_action #np.argmax(action_vec)
         else:
             return
 
@@ -110,8 +111,8 @@ class RolloutWorker:
 
         # Set /RLAgent/reset true
         rospy.set_param('/RLAgent/reset', 1)
-        # TODO: Check if this works^ <- this is working but I should use ros msg to communicate the reset state
-        print("RLAgent reset parameter checking: {}".format(rospy.get_param('/RLAgent/reset')))
+        # TODO: Check if this works^ <- this is working but I should use ros msg to communicate the reset state in the auto-resetting system.
+        #print("RLAgent reset parameter checking: {}".format(rospy.get_param('/RLAgent/reset')))
 
         # generate episodes
         obs, acts, rewards = [], [], []
@@ -123,9 +124,9 @@ class RolloutWorker:
 
             if reset_flag:
                 if self.current_action is not None:  #
-                    print("self.current_state dime : {}, self.current_action dim : {}, self.current_reward.dim : {}".format(
-                        self.current_state, self.current_action, self.current_reward
-                    ))
+                    #print("self.current_state dim : {}, self.current_action dim : {}, self.current_reward.dim : {}".format(
+                    #    self.current_state, self.current_action, self.current_reward
+                    #))
                     # adding batch dimension for compatibility with OpenAI baselines code
                     obs.append(np.expand_dims(np.array(self.current_state), 0))
                     one_hot_action = np.zeros(self.dims['u'])
@@ -139,7 +140,7 @@ class RolloutWorker:
                     rospy.loginfo('RLAgent sampled action: {}'.format(
                             ACT_CMDS[self.current_action]))
                     rla = RLAction(action=self.current_action)
-                    print("RLAction msg has been published from ILRL.py!!!")
+                    #print("RLAction msg has been published from ILRL.py!!!")
                     self.ac_pub.publish(rla)
                     # The above line corresponds to Line 284-298 in the original RolloutWorker script from OpenAI
                     # where they do self.env.step(u) kind of thing to get a new state and reward.
@@ -164,25 +165,32 @@ def train(policy, rollout_worker, n_epochs, n_batches):
     Q_history = deque()
     q_hist, critic_loss_hist, actor_loss_hist = [], [], []
     for epoch in range(n_epochs):
-        print('ok')
+        #print('ok')
         if rollout_worker.compute_Q:
             episode, mean_Q = rollout_worker.generate_rollouts()
         else:
             episode = rollout_worker.generate_rollouts()
         # TODO Check how store_episode will go
         policy.store_episode(episode)
+        critic_loss_que, actor_loss_que = [], []
         for i in range(n_batches): # update q-values
             critic_loss, actor_loss = policy.train()
-            print("n_batch: {}, critic_loss: {}, actor_loss: {}".format(i, critic_loss, actor_loss))
+            critic_loss_que.append(critic_loss); actor_loss_que.append(actor_loss)
+            # print("n_batch: {}, critic_loss: {}, actor_loss: {}".format(i, critic_loss, actor_loss))
         print("Mean Q-value: {}".format(mean_Q))
+        mean_critic_loss = np.mean(critic_loss_que)
+        mean_actor_loss = np.mean(actor_loss_que)
+        print("Mean critic loss: {}".format(mean_critic_loss))
+        print("Mean actor loss: {}".format(mean_actor_loss))
         q_hist.append(mean_Q)
-        critic_loss_hist.append(critic_loss)
-        actor_loss_hist.append(actor_loss)
+        critic_loss_hist.append(mean_critic_loss)
+        actor_loss_hist.append(mean_actor_loss)
         policy.update_target_net() # update the target net less frequently
         np.save('/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/results/q_val.npy', np.array(q_hist))
         np.save('/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/results/cri_loss.npy', np.array(critic_loss_hist))
         np.save('/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/results/actor_loss.npy', np.array(actor_loss_hist))
-
+        save_loc = policy.save_model()
+        print('saved model at : {} after {} epochs'.format(save_loc, epoch+1))
 
 if __name__ == '__main__':
     rospy.init_node(NODE)
@@ -190,7 +198,8 @@ if __name__ == '__main__':
     dims = {'o': 9, 'u': 9}
     model_name = 'Jun2714152018_eps1_Jun2714312018_eps1_Jul816002018_eps1'
     n_epochs = 100000
+    random_eps = 0.1
     policy = config.configure_mlp(dims=dims, model_name=model_name, model_save_path=MODEL_SAVE_PATH)
     print(policy)
-    rollout_worker = RolloutWorker(policy, dims, use_target_net=True, compute_Q=True)
+    rollout_worker = RolloutWorker(policy, dims, use_target_net=True, compute_Q=True, random_eps=random_eps)
     train(policy=policy, rollout_worker=rollout_worker, n_epochs=n_epochs, n_batches=100)

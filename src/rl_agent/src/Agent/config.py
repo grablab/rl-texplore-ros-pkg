@@ -1,4 +1,5 @@
 import numpy as np
+import os
 import tensorflow as tf
 
 from replay_buffer import ReplayBuffer
@@ -101,6 +102,9 @@ def configure_mlp(dims, model_name, model_save_path):
     num_states = dims['o']
     num_actions = dims['u']
     gamma = 1 - 1.0/60
+
+    if not os.path.exists(model_save_path):
+        os.makedirs(model_save_path)
 
     policy = MLP(num_states=num_states, num_actions=num_actions, bc_loss=False, gamma=gamma, model_name=model_name,
                  save_path=model_save_path)
