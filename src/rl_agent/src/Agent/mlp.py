@@ -14,6 +14,10 @@ ACT_FNS = {'relu': tf.nn.relu}
 def dims_to_shapes(input_dims):
     return {key: tuple([val]) if val > 0 else tuple() for key, val in input_dims.items()}
 
+
+global demoBuffer
+
+
 class MLP(object):
     def __init__(self, num_states=14, num_actions=9, buffer_size=10000, n_layers=4, hidden_units=[100, 60, 40, 20], act_fn='relu',
                  model_name='il_policy', polyak=0.5, batch_size=40, demo_batch_size=30, action_l2=1.0, clip_return=None,
@@ -107,10 +111,21 @@ class MLP(object):
         #self.buffer = PrioritizedReplayBuffer(buffer_shapes, )
 
         # I don't think I need demoBuffer for now -> This is necessary if I want to use self.bc_loss = True
-
+        global demoBuffer
+        demoBuffer = ReplayBuffer(buffer_size)
 
     def save_model(self):
         return self.saver.save(self.sess, os.path.join(self.save_path, self.model_name))
+
+    def initDemoBuffer(self, demoDataFile):
+        demoData = np.load(demoDataFile)
+        episode = dict(o=None, u=None, r=None)
+        episode['o'] = np.expand_dims(demoData[:, :9], axis=0)
+        episode['u'] = np.expand_dims(demoData[:, 9:18], axis=0)
+        episode['r'] = np.expand_dims(demoData[:, -1], axis=0)
+        global demoBuffer
+        demoBuffer.store_episode(episode)
+        print("Demo buffer size currently ", demoBuffer.get_current_size())
 
 
     def _create_network(self, reuse):
@@ -168,7 +183,7 @@ class MLP(object):
             self.pi_loss_tf += self.lambda2 * self.cloning_loss_tf
         elif self.bc_loss == 1 and self.q_filter == 0:
             self.cloning_loss_tf = tf.reduce_sum(
-                tf.square(tf.boolean_mask((self.main.pi_tf), mask) - tf.boolean_mask((batch_tf['u']), mask)))
+                tf.square(tf.boolean_mask(self.main.pi_tf, mask) - tf.boolean_mask((batch_tf['u']), mask)))
             self.pi_loss_tf = -self.lambda1 * tf.reduce_mean(self.main.Q_pi_tf)
             self.pi_loss_tf += self.lambda1 * self.action_l2 * tf.reduce_mean(tf.square(self.main.pi_tf))
             self.pi_loss_tf += self.lambda2 * self.cloning_loss_tf
@@ -276,6 +291,13 @@ class MLP(object):
         if self.bc_loss:
             #TODO: I can probably just use train.csv to fill up demoBuffer.
             transitions = self.buffer.sample(self.batch_size - self.demo_batch_size)
+            global demoBuffer
+            transitionsDemo = demoBuffer.sample(self.demo_batch_size)
+            for k, values in transitionsDemo.items():
+                rolloutV = transitions[k].tolist()
+                for v in values:
+                    rolloutV.append(v.tolist())
+                transitions[k] = np.array(rolloutV)
         else:
             transitions = self.buffer.sample(self.batch_size)
 

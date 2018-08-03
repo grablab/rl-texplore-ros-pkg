@@ -161,9 +161,10 @@ class RolloutWorker:
             rate.sleep()
 
 
-def train(policy, rollout_worker, n_epochs, n_batches):
+def train(policy, rollout_worker, n_epochs, n_batches, demo_file):
     Q_history = deque()
     q_hist, critic_loss_hist, actor_loss_hist = [], [], []
+    if policy.bc_loss == 1: policy.initDemoBuffer(demo_file)
     for epoch in range(n_epochs):
         #print('ok')
         if rollout_worker.compute_Q:
@@ -199,7 +200,9 @@ if __name__ == '__main__':
     model_name = 'Jun2714152018_eps1_Jun2714312018_eps1_Jul816002018_eps1'
     n_epochs = 100000
     random_eps = 0.1
+    # bc_loss = True # See def configure_mlp in config.py too
+    demo_file = '/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/data/demodata.npy'
     policy = config.configure_mlp(dims=dims, model_name=model_name, model_save_path=MODEL_SAVE_PATH)
     print(policy)
     rollout_worker = RolloutWorker(policy, dims, use_target_net=True, compute_Q=True, random_eps=random_eps)
-    train(policy=policy, rollout_worker=rollout_worker, n_epochs=n_epochs, n_batches=100)
+    train(policy=policy, rollout_worker=rollout_worker, n_epochs=n_epochs, n_batches=100, demo_file=demo_file)

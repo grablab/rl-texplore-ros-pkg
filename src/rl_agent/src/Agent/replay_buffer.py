@@ -106,6 +106,9 @@ class ReplayBuffer:
             self.n_transitions_stored += batch_size * self.T
         '''
 
+    def get_current_size(self):
+        return len(self._storage)
+
     def clear_buffer(self):
         # TODO Fix this
         self._storage = []
