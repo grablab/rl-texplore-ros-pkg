@@ -16,26 +16,6 @@ class ReplayBuffer:
         self._maxsize = size
         self._next_idx = 0
 
-    def _encode_samples_a2c(self, idxes):
-        '''
-        :param buffers: {key: array(current_num_episodes_in_buffer x T x dim_key)}
-        :param batch_size: batch_size for training
-        :return: transitions data (o, o_2, u, r)
-        '''
-        obses_t, actions, rewards, obses_tp1, values = [], [], [], [], []
-        for i in idxes:
-            data = self._storage[i]
-            obs_t, action, reward, obs_tp1, value = data
-            obses_t.append(np.array(obs_t, copy=False))
-            actions.append(np.array(action, copy=False))
-            rewards.append(reward)
-            obses_tp1.append(np.array(obs_tp1, copy=False))
-            values.append(value)
-
-        transitions = {'o': np.array(obses_t), 'o_2': np.array(obses_tp1),
-                       'u': np.array(actions), 'r': np.array(rewards), 'v': np.array(values)}
-        return transitions
-
     def _encode_samples(self, idxes):
         '''
         :param buffers: {key: array(current_num_episodes_in_buffer x T x dim_key)}
@@ -45,7 +25,7 @@ class ReplayBuffer:
         obses_t, actions, rewards, obses_tp1 = [], [], [], []
         for i in idxes:
             data = self._storage[i]
-            obs_t, action, reward, obs_tp1, value = data
+            obs_t, action, reward, obs_tp1 = data
             obses_t.append(np.array(obs_t, copy=False))
             actions.append(np.array(action, copy=False))
             rewards.append(reward)
@@ -66,11 +46,6 @@ class ReplayBuffer:
                        for key in buffers.keys()}
         return transitions
         '''
-
-    def sample_a2c(self, batch_size):
-        idxes = [random.randint(0, len(self._storage) - 1) for _ in range(batch_size)]
-        return self._encode_samples_a2c(idxes)
-
     def sample(self, batch_size):
         """
         Note:
@@ -90,31 +65,6 @@ class ReplayBuffer:
         # transitions = self._encode_samples(buffers, batch_size)
         idxes = [random.randint(0, len(self._storage) - 1) for _ in range(batch_size)]
         return self._encode_samples(idxes)
-
-    def store_episode_a2c(self, episode_batch):
-        batch_sizes = [len(episode_batch[key]) for key in episode_batch.keys()]
-        assert np.all(np.array(batch_sizes) == batch_sizes[0])
-        print('episode_batch['u'].shape: {}'.format(episode_batch['u'].shape))
-        episode_batch['u'] = np.squeeze(episode_batch['u'])
-        episode_batch['o'] = np.squeeze(episode_batch['o'])
-        episode_batch['r'] = np.squeeze(episode_batch['r'])
-        episode_batch['v'] = np.squeeze(episode_batch['v'])
-        if len(episode_batch['u'].shape) == 1:
-            print('episode only contains one data sample!!')
-            return
-        episode_len, _ = episode_batch['u'].shape
-        print('episode length in store_episode: {}'.format(episode_len))
-        for i in range(episode_len-1):
-            o = episode_batch['o'][i]; o_2 = episode_batch['o'][i+1]
-            u = episode_batch['u'][i]; r = episode_batch['r'][i]
-            v = episode_batch['v'][i]
-            data = (o, u, r, o_2, v)
-            if self._next_idx >= len(self._storage):
-                self._storage.append(data)
-            else:
-                self._storage[self._next_idx] = data
-            self._next_idx = (self._next_idx + 1) % self._maxsize
-
 
     def store_episode(self, episode_batch):
         """episode_batch: array(batch_size x (T or T+1) x dim_key)

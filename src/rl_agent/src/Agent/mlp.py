@@ -223,7 +223,6 @@ class MLP(object):
         self._init_target_net()
 
 
-
     def _restore(self, pi_var_list, checkpoint_path):
         saver = tf.train.Saver(var_list=pi_var_list)
         saver.restore(self.sess, checkpoint_path)
