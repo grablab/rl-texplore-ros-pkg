@@ -1,0 +1,2 @@
+model_checkpoint_path: "/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/il_policy_for_a2c"
+all_model_checkpoint_paths: "/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/il_policy_for_a2c"

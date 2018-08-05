@@ -16,7 +16,7 @@ class Model(object):
     def __init__(self, policy, num_states, num_actions, nsteps, nenvs=1, batch_size=40,
                  ent_coef=0.01, vf_coef=0.5, max_grad_norm=0.5, lr=7e-4, buffer_size=10000,
                  alpha=0.99, epsilon=1e-5, total_timesteps=int(80e6), lrschedule='linear',
-                 save_path=None, model_name=None, bc_loss=False):
+                 save_path=None, model_name=None, bc_loss=False, restore=False, checkpoint_path=None):
         self.save_path = save_path; self.model_name = model_name; self.bc_loss = bc_loss
         #TODo Figure out what nsteps corresponds to things in mlp.py
         self.sess = tf.get_default_session()
@@ -30,8 +30,8 @@ class Model(object):
         R = tf.placeholder(tf.float32, [nbatch]) # reward
         LR = tf.placeholder(tf.float32, []) # learning rate
 
-        step_model = policy(self.sess, num_states, num_actions, nenvs, 1, reuse=False) # target network
-        train_model = policy(self.sess, num_states, num_actions, nenvs*nsteps, nsteps, reuse=True)
+        # step_model = policy(self.sess, num_states, num_actions, nenvs, 1, reuse=False) # target network
+        train_model = policy(self.sess, num_states, num_actions, nenvs*nsteps, nsteps, reuse=False)
 
         neglogpac = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=train_model.pi, labels=tf.argmax(A, axis=1))
         pg_loss = tf.reduce_mean(ADV * neglogpac)
@@ -63,7 +63,7 @@ class Model(object):
             return policy_loss, value_loss, policy_entropy
 
         def get_actions(o, noise_eps=0., random_eps=0., use_target_net=False, compute_Q=False):
-            act, q_val, _, _ = step_model.step(o)
+            act, q_val, _, _ = train_model.step(o)
             #TODO Check the dimension of act
             return act[0], q_val
 
@@ -71,19 +71,30 @@ class Model(object):
         self.get_actions = get_actions
         self.train = train
         self.train_model = train_model
-        self.step_model = step_model
+        # self.step_model = step_model
         self.buffer = ReplayBuffer(buffer_size)
         # tf.global_variables_initializer().run()
         # tf.variables_initializer(self._global_vars('')).run()
+        if restore:
+            print("restoring pretrained pi")
+            pi_var_list = self._vars("model/pi")
+            self._restore(pi_var_list, checkpoint_path)
         tf.global_variables_initializer().run(session=self.sess)
 
+    '''
     def _global_vars(self, scope):
         res = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=self.scope + '/' + scope)
         return res
+    '''
 
     def _restore(self, pi_var_list, checkpoint_path):
         saver = tf.train.Saver(var_list=pi_var_list)
         saver.restore(self.sess, checkpoint_path)
+
+    def _vars(self, scope):
+        res = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope)
+        assert len(res) > 0
+        return res
 
     def save_model(self):
         return self.saver.save(self.sess, os.path.join(self.save_path, self.model_name))

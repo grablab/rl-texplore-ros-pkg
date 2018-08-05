@@ -21,7 +21,8 @@ from policies import MlpPolicy
 
 NODE = "RLAgent"
 MODE = 'a2c_mlp' # 'il'  # nfq
-MODEL_SAVE_PATH = os.path.join(os.environ['HOME'], 'grablab-ros/src/projects/sliding_policies/models/' + MODE + '/')
+# MODEL_SAVE_PATH = os.path.join(os.environ['HOME'], 'grablab-ros/src/projects/sliding_policies/models/' + MODE + '/')
+MODEL_SAVE_PATH = os.path.join(os.environ['HOME'], 'grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/')
 ACT_CMDS = ['up', 'down', 'left', 'right', 'left up', 'left down', 'right up', 'right down', 'stop']
 
 
@@ -200,7 +201,8 @@ if __name__ == '__main__':
     rospy.init_node(NODE)
     rospy.loginfo('started RLAgent node')
     dims = {'o': 9, 'u': 9}
-    model_name = 'Jun2714152018_eps1_Jun2714312018_eps1_Jul816002018_eps1'
+    model_name = 'il_policy_for_a2c' #'Jun2714152018_eps1_Jun2714312018_eps1_Jul816002018_eps1'
+    checkpoint_path = os.path.join(MODEL_SAVE_PATH, model_name)
     n_epochs = 100000
     random_eps = 0.1
     bc_loss = False
@@ -208,10 +210,10 @@ if __name__ == '__main__':
     # bc_loss = True # See def configure_mlp in config.py too
     policy = MlpPolicy
     model = Model(policy, num_states=dims['o'], num_actions=dims['u'], nsteps=nsteps, bc_loss=bc_loss,
-                  model_name=model_name, save_path=MODEL_SAVE_PATH)
+                  model_name=model_name, save_path=MODEL_SAVE_PATH, checkpoint_path=checkpoint_path, restore=True)
     print(model)
     rollout_worker = RolloutWorker(model, dims, use_target_net=True, compute_Q=True, random_eps=random_eps)
 
-    n_batches = 100
+    n_batches = 2
     demo_file = '/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/data/demodata.npy'
     train(model=model, rollout_worker=rollout_worker, n_epochs=n_epochs, n_batches=n_batches, demo_file=demo_file)

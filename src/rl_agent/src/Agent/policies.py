@@ -125,7 +125,7 @@ class CategoricalPd(Pd):
 
 
 class MlpPolicy(object):
-    def __init__(self, sess, num_states, num_actions, nbatch, nsteps, reuse=False): #pylint: disable=W0613
+    def __init__(self, sess, num_states, num_actions, nbatch, nsteps, reuse=False, deterministic=False): #pylint: disable=W0613
         self.pdtype = CategoricalPdType(num_actions)
         with tf.variable_scope("model", reuse=reuse):
             # X, processed_x = observation_input(ob_space, nbatch)
@@ -133,18 +133,30 @@ class MlpPolicy(object):
             # X = tf.placeholder(shape=(nbatch, num_states), dtype=tf.int32, name='Ob')
             X = tf.placeholder(shape=(None, num_states), dtype=tf.int32, name='Ob')
             processed_x = tf.to_float(X)   #tf.to_float(tf.one_hot(X, num_states))
-            activ = tf.tanh
+            activ = tf.nn.relu
             processed_x = tf.layers.flatten(processed_x)
-            pi_h1 = activ(fc(processed_x, 'pi_fc1', nh=64, init_scale=np.sqrt(2)))
-            pi_h2 = activ(fc(pi_h1, 'pi_fc2', nh=64, init_scale=np.sqrt(2)))
-            vf_h1 = activ(fc(processed_x, 'vf_fc1', nh=64, init_scale=np.sqrt(2)))
-            vf_h2 = activ(fc(vf_h1, 'vf_fc2', nh=64, init_scale=np.sqrt(2)))
-            vf = fc(vf_h2, 'vf', 1)[:,0]
+            with tf.variable_scope('pi'):
+                pi_h1 = activ(fc(processed_x, 'fc1', nh=64, init_scale=np.sqrt(2)))
+                pi_h2 = activ(fc(pi_h1, 'fc2', nh=64, init_scale=np.sqrt(2)))
+                pi_h3 = activ(fc(pi_h2, 'fc3', nh=64, init_scale=np.sqrt(2)))
+            with tf.variable_scope('vf'):
+                vf_h1 = activ(fc(processed_x, 'fc1', nh=64, init_scale=np.sqrt(2)))
+                vf_h2 = activ(fc(vf_h1, 'fc2', nh=64, init_scale=np.sqrt(2)))
+                vf = fc(vf_h2, 'vf', 1)[:,0]
 
-            self.pd, self.pi = self.pdtype.pdfromlatent(pi_h2, init_scale=0.01)
+            # this is also under tf.variable_scope('pi') see Line 87 in common/distributions.py
+            if not deterministic:
+                self.pd, self.pi = self.pdtype.pdfromlatent(pi_h3, init_scale=0.01)
+            else:
+                self.pi = fc(pi_h3, 'pi', num_actions, init_scale=np.sqrt(2))
 
-        a0 = self.pd.sample()
-        neglogp0 = self.pd.neglogp(a0)
+        if not deterministic:
+            a0 = self.pd.sample()
+            neglogp0 = self.pd.neglogp(a0)
+        else:
+            print(self.pi)
+            a0 = tf.argmax(self.pi, axis=1)
+            #neglogp0 =
         self.initial_state = None
 
         def step(ob, *_args, **_kwargs):
@@ -154,8 +166,12 @@ class MlpPolicy(object):
                 policy.u_tf: np.zeros((1, self.dimu), dtype=np.float32)
             }
             '''
-            a, v, neglogp = sess.run([a0, vf, neglogp0], {X: np.array(ob).reshape(-1, num_states)})
-            return a, v, self.initial_state, neglogp
+            if deterministic:
+                a = sess.run([a0], {X: np.array(ob).reshape(-1, num_states)})
+                return a[0]
+            else:
+                a, v, neglogp = sess.run([a0, vf, neglogp0], {X: np.array(ob).reshape(-1, num_states)})
+                return a, v, self.initial_state, neglogp
 
         def value(ob, *_args, **_kwargs):
             return sess.run(vf, {X: ob})

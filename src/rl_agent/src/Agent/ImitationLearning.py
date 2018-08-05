@@ -105,7 +105,7 @@ class ILPolicy:
 #     agent = ILRLAgent(num_actions, num_states)
 #     return agent
 
-
+'''
 class RLBase(object):
     def __init__(self):
         print('RLBase created')
@@ -113,9 +113,9 @@ class RLBase(object):
 
     def gripper_load_callback(self, data):
         print("gripper_load_callback data : {}".format(data))
+'''
 
-
-class ILRLAgent(RLBase):
+class ILRLAgent(object):
     """
     Loads a TensorFlow model and turns it into an agent that publishes to rl_agent/rl_action
     """
