@@ -167,8 +167,9 @@ class RolloutWorker:
 
 def train(model, rollout_worker, n_epochs, n_batches, demo_file):
     Q_history = deque()
-    q_hist, critic_loss_hist, actor_loss_hist = [], [], []
-    if model.bc_loss == 1: model.initDemoBuffer(demo_file)
+    q_hist, critic_loss_hist, actor_loss_hist, ent_hist, bc_loss_hist = [], [], [], [], []
+    if model.bc_loss == 1:
+        model.initDemoBuffer(demo_file)
     for epoch in range(n_epochs):
         #print('ok')
         if rollout_worker.compute_Q:
@@ -177,23 +178,33 @@ def train(model, rollout_worker, n_epochs, n_batches, demo_file):
             episode = rollout_worker.generate_rollouts()
         # TODO Check how store_episode will go
         model.store_episode(episode)
-        critic_loss_que, actor_loss_que = [], []
+        critic_loss_que, actor_loss_que, ent_que = [], [], []
+        bc_loss_que = []
         for i in range(n_batches): # update q-values
-            critic_loss, actor_loss, ent = model.train()
+            critic_loss, actor_loss, ent, bc_loss_np = model.train()
             critic_loss_que.append(critic_loss); actor_loss_que.append(actor_loss)
+            ent_que.append(ent); bc_loss_que.append(bc_loss_np)
             # print("n_batch: {}, critic_loss: {}, actor_loss: {}".format(i, critic_loss, actor_loss))
         print("Mean Q-value: {}".format(mean_Q))
         mean_critic_loss = np.mean(critic_loss_que)
         mean_actor_loss = np.mean(actor_loss_que)
+        mean_ent = np.mean(ent_que)
+        mean_bc_loss = np.mean(bc_loss_que)
         print("Mean critic loss: {}".format(mean_critic_loss))
         print("Mean actor loss: {}".format(mean_actor_loss))
+        print("Mean bc loss: {}".format(mean_bc_loss))
+        print("Mean entopy: {}".format(mean_ent))
         q_hist.append(mean_Q)
         critic_loss_hist.append(mean_critic_loss)
         actor_loss_hist.append(mean_actor_loss)
+        ent_hist.append(mean_ent)
+        bc_loss_hist.append(mean_bc_loss)
         #model.update_target_net() # update the target net less frequently
         np.save('/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/results/q_val.npy', np.array(q_hist))
         np.save('/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/results/cri_loss.npy', np.array(critic_loss_hist))
         np.save('/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/results/actor_loss.npy', np.array(actor_loss_hist))
+        np.save('/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/results/ent.npy', np.array(ent_hist))
+        np.save('/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/results/bc_loss.npy', np.array(bc_loss_hist))
         save_loc = model.save_model()
         print('saved model at : {} after {} epochs'.format(save_loc, epoch+1))
 
@@ -205,15 +216,17 @@ if __name__ == '__main__':
     checkpoint_path = os.path.join(MODEL_SAVE_PATH, model_name)
     n_epochs = 100000
     random_eps = 0.1
-    bc_loss = False
+    bc_loss = True #False
     nsteps = 40 # batch_size in mlp.py I guess?
+    batch_size = 40
+    demo_batch_size = 40
     # bc_loss = True # See def configure_mlp in config.py too
     policy = MlpPolicy
-    model = Model(policy, num_states=dims['o'], num_actions=dims['u'], nsteps=nsteps, bc_loss=bc_loss,
+    model = Model(policy, num_states=dims['o'], num_actions=dims['u'], nsteps=nsteps, bc_loss=bc_loss, batch_size=40, demo_batch_size=20,
                   model_name=model_name, save_path=MODEL_SAVE_PATH, checkpoint_path=checkpoint_path, restore=True)
     print(model)
     rollout_worker = RolloutWorker(model, dims, use_target_net=True, compute_Q=True, random_eps=random_eps)
 
-    n_batches = 2
+    n_batches = 10 #2
     demo_file = '/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/data/demodata.npy'
     train(model=model, rollout_worker=rollout_worker, n_epochs=n_epochs, n_batches=n_batches, demo_file=demo_file)

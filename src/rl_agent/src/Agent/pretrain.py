@@ -378,5 +378,5 @@ def rollout(model, node_name):
         rate.sleep()
 
 if __name__ == '__main__':
-    #train()
-    evaluate()
+    train()
+    #evaluate()

@@ -309,19 +309,20 @@ class MLP(object):
     def train(self, stage=True):
         if stage:
             self.stage_batch()
-        critic_loss, actor_loss, Q_grad, pi_grad = self._grads()
+        critic_loss, actor_loss, bc_loss_np, Q_grad, pi_grad = self._grads()
         self._update(Q_grad, pi_grad)
-        return critic_loss, actor_loss
+        return critic_loss, actor_loss, bc_loss_np
 
     def _grads(self):
         # Avoid feed_dict here for performance!
-        critic_loss , actor_loss, Q_grad, pi_grad = self.sess.run([
+        critic_loss , actor_loss, bc_loss_tf, Q_grad, pi_grad = self.sess.run([
             self.Q_loss_tf,
             self.pi_loss_tf,
+            self.cloning_loss_tf,
             self.Q_grad_tf,
             self.pi_grad_tf
         ])
-        return critic_loss, actor_loss, Q_grad, pi_grad
+        return critic_loss, actor_loss, bc_loss_tf, Q_grad, pi_grad
 
 
     def _update(self, Q_grad, pi_grad):

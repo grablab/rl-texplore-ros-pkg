@@ -45,7 +45,7 @@ class ReplayBuffer:
         obses_t, actions, rewards, obses_tp1 = [], [], [], []
         for i in idxes:
             data = self._storage[i]
-            obs_t, action, reward, obs_tp1, value = data
+            obs_t, action, reward, obs_tp1 = data
             obses_t.append(np.array(obs_t, copy=False))
             actions.append(np.array(action, copy=False))
             rewards.append(reward)
