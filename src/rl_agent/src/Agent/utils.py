@@ -4,10 +4,28 @@ import numpy as np
 import tensorflow as tf
 from collections import deque
 
+
 def find_trainable_variables(key):
     with tf.variable_scope(key):
         return tf.trainable_variables()
 
+
+def batch_to_seq(h, nbatch, nsteps, flat=False):
+    if flat:
+        h = tf.reshape(h, [nbatch, nsteps])
+    else:
+        h = tf.reshape(h, [nbatch, nsteps, -1])
+    return [tf.squeeze(v, [1]) for v in tf.split(axis=1, num_or_size_splits=nsteps, value=h)]
+
+
+def seq_to_batch(h, flat = False):
+    shape = h[0].get_shape().as_list()
+    if not flat:
+        assert(len(shape) > 1)
+        nh = h[0].get_shape()[-1].value
+        return tf.reshape(tf.concat(axis=1, values=h), [-1, nh])
+    else:
+        return tf.reshape(tf.stack(values=h, axis=1), [-1])
 
 def mse(pred, target):
     return tf.square(pred-target)/2.
@@ -37,6 +55,9 @@ def cat_entropy(logits):
     p0 = ea0 / z0
     return tf.reduce_sum(p0 * (tf.log(z0) - a0), 1)
 
+
+def cat_entropy_softmax(p0):
+    return - tf.reduce_sum(p0 * tf.log(p0 + 1e-6), axis = 1)
 
 def fc(x, scope, nh, init_scale=1.0, init_bias=0.0):
     with tf.variable_scope(scope):
@@ -103,3 +124,26 @@ class Scheduler(object):
 
     def value_steps(self, steps):
         return self.v*self.schedule(steps/self.nvalues)
+
+
+# For ACER
+def get_by_index(x, idx):
+    assert(len(x.get_shape()) == 2)
+    assert(len(idx.get_shape()) == 1)
+    idx_flattened = tf.range(0, x.shape[0]) * x.shape[1] + idx
+    y = tf.gather(tf.reshape(x, [-1]),  # flatten input
+                  idx_flattened)  # use flattened indices
+    return y
+
+def check_shape(ts,shapes):
+    i = 0
+    for (t,shape) in zip(ts,shapes):
+        assert t.get_shape().as_list()==shape, "id " + str(i) + " shape " + str(t.get_shape()) + str(shape)
+        i += 1
+
+def q_explained_variance(qpred, q):
+    _, vary = tf.nn.moments(q, axes=[0, 1])
+    _, varpred = tf.nn.moments(q - qpred, axes=[0, 1])
+    check_shape([vary, varpred], [[]] * 2)
+    return 1.0 - (varpred / vary)
+

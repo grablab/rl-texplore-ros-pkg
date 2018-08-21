@@ -2,7 +2,7 @@ import random
 import numpy as np
 
 class ReplayBuffer:
-    def __init__(self, size):
+    def __init__(self, size, sample_transitions):
         """Creates a replay buffer.
         Args:
             buffer_shapes (dict of ints): the shape for all buffers that are used in the replay
@@ -12,17 +12,39 @@ class ReplayBuffer:
             sample_transitions (function): a function that samples from the replay buffer
         """
         self._storage = []
+        self.buffers = {}
+        self.sample_transitions = sample_transitions
         self._maxsize = size
         self._next_idx = 0
 
-    def sample_her(self, batch_size):
-        episode_idxs = np.random.randint(0, )
-        episode_len_arr =
+    def has_atleast(self, size):
+        return self.num_in_buffer >= size
 
+    def sample(self, batch_size):
+        """Returns a dict {key: array(batch_size x shapes[key])}
+        """
+        buffers = {}
+
+        for key in self.buffers.keys():
+            buffers[key] = self.buffers[key][:self.current_size]
+
+        buffers['o_2'] = buffers['o'][:, 1:, :]
+        buffers['ag_2'] = buffers['ag'][:, 1:, :]
+
+        drop_time_steps = None  # Have to think how to incorporate this
+        transitions = self.sample_transitions(buffers, batch_size, drop_time_steps)
+
+        for key in (['r', 'o_2', 'ag_2'] + list(self.buffers.keys())):
+            assert key in transitions, "key %s missing from transitions" % key
+
+        return transitions
 
     def sample_a2c(self, batch_size):
         idxes = [random.randint(0, len(self._storage) - 1) for _ in range(batch_size)]
         return self._encode_samples_a2c(idxes)
+
+    def store_episode(self, episode_batch):
+        pass
 
     def store_episode_a2c(self, episode_batch):
         batch_sizes = [len(episode_batch[key]) for key in episode_batch.keys()]
