@@ -1,8 +1,10 @@
 import tensorflow as tf
+import numpy as np
 from utils import cat_entropy, mse, find_trainable_variables, Scheduler
 from utils import get_by_index, q_explained_variance
 from utils import cat_entropy_softmax, check_shape, batch_to_seq, seq_to_batch
 
+from her import make_sample_her_transitions
 from replay_buffer_her import ReplayBuffer
 
 # remove last step
@@ -50,7 +52,7 @@ class Model(object):
         self.nbatch = nbatch = nenvs*nsteps
         #nact = num_actions
 
-        A = tf.placeholder(tf.int32, [nbatch, num_actions]) # actions
+        A = tf.placeholder(tf.int32, [nbatch]) # actions
         D = tf.placeholder(tf.float32, [nbatch]) # dones
         R = tf.placeholder(tf.float32, [nbatch]) # rewards, not returns
         MU = tf.placeholder(tf.float32, [nbatch, num_actions]) # mu's
@@ -60,10 +62,15 @@ class Model(object):
         # this is going to be X in build_policy
         #step_ob_placeholder = tf.placeholder(dtype=ob_space.dtype, shape=(nenvs,) + ob_space.shape[:-1] + (ob_space.shape[-1] * nstack,))
         #train_ob_placeholder = tf.placeholder(dtype=ob_space.dtype, shape=(nenvs*(nsteps+1),) + ob_space.shape[:-1] + (ob_space.shape[-1] * nstack,))
+        step_ob_placeholder = tf.placeholder(dtype=tf.int32, shape=(nenvs,13))
+        train_ob_placeholder = tf.placeholder(dtype=tf.int32, shape=(nenvs*(nsteps+1), 13))
         with tf.variable_scope('acer_model', reuse=tf.AUTO_REUSE):
-            step_model = policy(num_states=num_states, num_actions=num_actions, sess=self.sess)
+            # step_model = policy(num_states=num_states, num_actions=num_actions, sess=self.sess)
+            # step_model = policy(num_states=num_states, num_actions=num_actions, sess=self.sess)
+            step_model = policy(observ_placeholder=step_ob_placeholder, num_actions=num_actions, sess=self.sess)
             #train_model = policy(observ_placeholder=train_ob_placeholder, sess=self.sess)
-            train_model = policy(num_states=num_states, num_actions=num_actions, sess=self.sess)
+            # train_model = policy(num_states=num_states, num_actions=num_actions, sess=self.sess)
+            train_model = policy(observ_placeholder=train_ob_placeholder, num_actions=num_actions, sess=self.sess)
 
         params = find_trainable_variables("acer_model")
         print("Params {}".format(len(params)))
@@ -80,7 +87,7 @@ class Model(object):
             return v
 
         with tf.variable_scope("acer_model", custom_getter=custom_getter, reuse=True):
-            polyak_model = policy(num_states=num_states, num_actions=num_actions, sess=sess)
+            polyak_model = policy(observ_placeholder=train_ob_placeholder, num_actions=num_actions, sess=sess)
 
         # Notation: (var) = batch variable, (var)s = seqeuence variable, (var)_i = variable index by action at step i
 
@@ -91,11 +98,21 @@ class Model(object):
         step_model_p = tf.nn.softmax(step_model.pi)
         v = tf.reduce_sum(train_model_p * train_model.q, axis = -1) # shape is [nenvs * (nsteps + 1)]
 
+        print("train_model_p shape: {}".format(train_model_p.get_shape().as_list()))
+        print("v shape: {}".format(v.get_shape().as_list()))
+        print("polyak_model_p shape: {}".format(polyak_model_p.get_shape().as_list()))
+        print("train_model.q shape: {}".format(train_model.q.get_shape().as_list()))
+
         # strip off last step # I'm assuming that the reason you need nsteps+1 for train_model is to get obs_{t+1} info
         # for Experience Replay (each tuple in the buffer should be (o_t, o_{t+1}, r_t, a_t)
         f, f_pol, q = map(lambda var: strip(var, nenvs, nsteps), [train_model_p, polyak_model_p, train_model.q])
+
+        print("f shape: {}".format(f.get_shape().as_list()))
+        print("f_pol shape: {}".format(f_pol.get_shape().as_list()))
+        print("q shape: {}".format(q.get_shape().as_list()))
+
         # Get pi and q values for actions taken
-        f_i = get_by_index(f, A) # I might have to take argmax(A) before feeding into this func since it expects scalar
+        f_i = get_by_index(f, A)  # I might have to take argmax(A) before feeding into this func since it expects scalar
         q_i = get_by_index(q, A)
 
         # Compute ratios for importance truncation
@@ -111,7 +128,7 @@ class Model(object):
         # Policy Graident loss, with truncated importance sampling & bias correction
         v = strip(v, nenvs, nsteps, True)
         check_shape([qret, v, rho_i, f_i], [[nenvs * nsteps]] * 4)
-        check_shape([rho, f, q], [[nenvs * nsteps, nact]] * 2)
+        check_shape([rho, f, q], [[nenvs * nsteps, num_actions]] * 2)
 
         # Truncated importance sampling
         adv = qret - v
@@ -123,7 +140,7 @@ class Model(object):
         # Bias correction for the truncation
         adv_bc = (q - tf.reshape(v, [nenvs * nsteps, 1]))  # [nenvs * nsteps, nact]
         logf_bc = tf.log(f + eps) # / (f_old + eps)
-        check_shape([adv_bc, logf_bc], [[nenvs * nsteps, nact]]*2)
+        check_shape([adv_bc, logf_bc], [[nenvs * nsteps, num_actions]]*2)
         gain_bc = tf.reduce_sum(logf_bc * tf.stop_gradient(adv_bc * tf.nn.relu(1.0 - (c / (rho + eps))) * f), axis = 1) #IMP: This is sum, as expectation wrt f
         loss_bc = -tf.reduce_mean(gain_bc)
 
@@ -164,21 +181,17 @@ class Model(object):
             run_ops = run_ops + []
             names_ops = names_ops + []
 
-        def train(obs, actions, rewards, dones, mus, states, masks, steps):
+        def train(obs, actions, rewards, dones, mus, steps):
             cur_lr = lr.value_steps(steps)
             td_map = {train_model.X: obs, polyak_model.X: obs, A: actions, R: rewards, D: dones, MU: mus, LR: cur_lr}
-            if states is not None:
-                td_map[train_model.S] = states
-                td_map[train_model.M] = masks
-                td_map[polyak_model.S] = states
-                td_map[polyak_model.M] = masks
-            return names_ops, sess.run(run_ops, td_map)[1:] # strip off _train
+            print('sess dayo-----: {}'.format(self.sess))
+            return names_ops, self.sess.run(run_ops, td_map)[1:] # strip off _train
 
-        def _step(observation, **kwargs):
-            return step_model._evaluate([step_model.action, step_model_p, step_model.state], observation, **kwargs)
+        def _step(observation, goal, **kwargs):
+            return step_model._evaluate([step_model.action, step_model_p], observation, **kwargs)
 
         def get_actions(o, g, noise_eps=0., random_eps=0., use_target_net=False, compute_Q=False):
-            actions, mus, states = self._step(o, g)
+            actions, mus = self._step(o, g)
             # states should be dummy states like []
             #TODO Check the dimension of act
             # return act[0], q_val
@@ -192,7 +205,10 @@ class Model(object):
         self._step = _step
         self.step = self.step_model.step
 
-        self.buffer = ReplayBuffer(buffer_size)
+        def reward_fun(ag_2, g):
+            return 1
+        self.sample_transitions = make_sample_her_transitions(replay_strategy='future', replay_k=4, reward_fun=reward_fun)
+        self.buffer = ReplayBuffer(buffer_size, nsteps, self.sample_transitions)
 
         self.initial_state = step_model.initial_state
         tf.global_variables_initializer().run(session=sess)
@@ -232,23 +248,35 @@ class Acer():
         if on_policy:
             episode = runner.generate_rollouts() #run()
             model.store_episode(episode)
-            #obs, actions, rewards, mus, dones, masks = episode
+            # obs, actions, rewards, mus, dones, masks = episode
+            obs, actions, rewards, mus, dones = episode['o'], episode['u'], episode['r'], episode['mu'], episode['d']
             #if buffer is not None:
             #    buffer.put(obs, actions, rewards, mus, dones, masks)
         else:
             transitions = model.sample_batch(model.nbatch)
-            obs, rewards, actions, mus, dones, masks = transitions['o'], transitions['r'], transitions['u'], transitions['mu']
+            obs, rewards, actions, mus, dones = transitions['o'], transitions['r'], transitions['u'], transitions['mu'], transitions['dones']
             #obs, actions, rewards, mus, dones, masks = buffer.get()
 
         # reshape correctly
+        print("obs.shape: {}".format(obs.shape))
+        print("actions.shape: {}".format(actions.shape))
+        print("rewards.shape: {}".format(rewards.shape))
+        print("dones.shape: {}".format(dones.shape))
+
+        obs = np.squeeze(obs)
+        actions = np.squeeze(actions)[:-1]
+        rewards = np.squeeze(rewards)[:-1]
+        mus = np.squeeze(mus)[:-1]
+        dones = np.squeeze(dones)[1:]
+        '''
         obs = obs.reshape(runner.batch_ob_shape)
         actions = actions.reshape([runner.nbatch])
         rewards = rewards.reshape([runner.nbatch])
         mus = mus.reshape([runner.nbatch, runner.nact])
         dones = dones.reshape([runner.nbatch])
-        masks = masks.reshape([runner.batch_ob_shape[0]])
-
-        names_ops, values_ops = model.train(obs, actions, rewards, dones, mus, model.initial_state, masks, steps)
+        # masks = masks.reshape([runner.batch_ob_shape[0]])
+        '''
+        names_ops, values_ops = model.train(obs, actions, rewards, dones, mus, steps)
 
         if on_policy:
             # records stuff

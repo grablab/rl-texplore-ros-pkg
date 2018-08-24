@@ -19,10 +19,13 @@ def batch_to_seq(h, nbatch, nsteps, flat=False):
 
 
 def seq_to_batch(h, flat = False):
-    shape = h[0].get_shape().as_list()
+    shape = h[0].get_shape().as_list() # should be [1, None] if n_env == 1
     if not flat:
         assert(len(shape) > 1)
         nh = h[0].get_shape()[-1].value
+        print("nhnhnhnhnh: {}".format(nh))
+        print("printing shape: {}".format(shape))
+        print("printing h: {}".format(h))
         return tf.reshape(tf.concat(axis=1, values=h), [-1, nh])
     else:
         return tf.reshape(tf.stack(values=h, axis=1), [-1])

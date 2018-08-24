@@ -1,6 +1,7 @@
 import tensorflow as tf
 from models import get_network_builder
 from utils import fc
+from tf_util import adjust_shape
 
 class Pd(object):
     """
@@ -210,10 +211,12 @@ class PolicyWithValue(object):
         return self._evaluate(self.vf, ob, *args, **kwargs)
 
     def save(self, save_path):
-        tf_util.save_state(save_path, sess=self.sess)
+        pass
+        #tf_util.save_state(save_path, sess=self.sess)
 
     def load(self, load_path):
-        tf_util.load_state(load_path, sess=self.sess)
+        pass
+        #tf_util.load_state(load_path, sess=self.sess)
 
 #def build_policy(env, policy_network, value_network=None, normalize_observations=False, estimate_q=False, **policy_kwargs):
 def build_policy(policy_network, value_network=None, normalize_observations=False, estimate_q=False, **policy_kwargs):
@@ -221,8 +224,12 @@ def build_policy(policy_network, value_network=None, normalize_observations=Fals
         network_type = policy_network
         policy_network = get_network_builder(network_type)(**policy_kwargs)
 
-    def policy_fn(num_states=9, num_actions=9, sess=None):
-        X = tf.placeholder(shape=(None, num_states), dtype=tf.int32, name='Ob')
+    # def policy_fn(num_states=9, num_actions=9, sess=None):
+    def policy_fn(observ_placeholder, num_actions, sess=None):
+        #X = tf.placeholder(shape=(None, num_states), dtype=tf.int32, name='Ob')
+        X = observ_placeholder
+
+        extra_tensors = {}
 
         encoded_x = tf.to_float(X)
 

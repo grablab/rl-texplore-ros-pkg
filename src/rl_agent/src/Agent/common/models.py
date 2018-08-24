@@ -3,7 +3,7 @@ import numpy as np
 from utils import fc
 
 
-def mlp(num_layers=2, num_hidden=64, activation=tf.relu):
+def mlp(num_layers=2, num_hidden=64, activation=tf.nn.relu):
     """
     Simple fully connected layer policy. Separate stacks of fully-connected layers are used for policy and value function estimation.
     More customized fully-connected policies can be obtained by using PolicyWithV class directly.

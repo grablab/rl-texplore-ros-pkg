@@ -9,10 +9,11 @@ def make_sample_her_transitions(replay_strategy, replay_k, reward_fun):
 
     def _sample_her_transitions(episode_batch, batch_size, drop_time_steps):
         # Prepare episode_batch somwhere else so that it's more flexible to determine what to include in this
-        # episode_batch (just to modularize the code)
+        # episode_batch (just to modularize the code) -> This is taken care of in def sample() in replay_buffer_her.py
         # episode_batch is {key: array(buffer_size x T x dim_key)}
         # I should take care of the drop case in the above prepare_episode_batch function.
         # drop_time_idxs should have shape [rollout_batch_size, 1]
+        # It looks like rollout_batch_size is the same thing as buffer_size
         T = episode_batch['u'].shape[1]
         rollout_batch_size = episode_batch['u'].shape[0]
 

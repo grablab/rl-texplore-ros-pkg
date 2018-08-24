@@ -1,5 +1,5 @@
 import tensorflow as tf
-
+import numpy as np
 
 def ortho_init(scale=1.0):
     def _ortho_init(shape, dtype, partition_info=None):
@@ -36,6 +36,9 @@ def convert_episode_to_batch_major(episode):
     for key in episode.keys():
         val = np.array(episode[key]).copy()
         # make inputs batch-major instead of time-major
+        print("Inside convert_episode_to_batch_major(episode) in utils.py")
+        print('key: {} val shape: {}'.format(key, val.shape))
         episode_batch[key] = val.swapaxes(0, 1)
-
+        print('after val.swapaxes')
+        print('key: {} val shape: {}'.format(key, episode_batch[key].shape))
     return episode_batch

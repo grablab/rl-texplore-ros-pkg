@@ -1,6 +1,7 @@
 #!/usr/bin/python
 import numpy as np
 import rospy
+from collections import deque
 
 from rl_msgs.msg import RLStateReward, RLAction
 from std_msgs.msg import Int32
@@ -32,6 +33,7 @@ class RolloutWorker:
         self.current_action = None
         self.current_state = None
         self.current_reward = 0
+        self.current_done = 0
         self.goal = None
         self.Q = None
         self.terminated = False
@@ -48,6 +50,9 @@ class RolloutWorker:
         # TODO: refactor this nonsensical function...
         if len(s) == 17:
             x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, a0, a2, a4 = s
+        elif len(s) == 21:
+            print("contact point correctly incorporated")
+            x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, a0, a2, a4, cp_left_x, cp_left_y, cp_right_x, cp_right_y = s
         elif len(s) == 9:
             x0, y0, x2, y2, x4, y4, a0, a2, a4 = s
         if self.dims['o'] == 6:
@@ -57,6 +62,8 @@ class RolloutWorker:
             # x0 /= 100; y0 /= 100; x2 /= 100; y2 /= 100; x4 /= 100; y4 /= 100
             # print("x0: {}".format(x0))
             s = [x0, y0, x2, y2, x4, y4, a0, a2, a4]
+        elif self.dims['o'] == 13:
+            s = [x0, y0, x2, y2, x4, y4, a0, a2, a4, cp_left_x, cp_left_y, cp_right_x, cp_right_y]
         else:
             assert False, 'need to set num_states to 6 or 9'
         return s
@@ -72,11 +79,18 @@ class RolloutWorker:
             self.current_state = self.prepare_s(sr.state)
             self.current_reward = sr.reward
             print("Current_reward: {}".format(self.current_reward))
+            '''
             policy_output = self.model.get_actions(self.current_state, self.goal,
                                                    compute_Q=self.compute_Q,
                                                    noise_eps=self.noise_eps if not self.exploit else 0.,
                                                    random_eps=self.random_eps if not self.exploit else 0.,
                                                    use_target_net=self.use_target_net)
+            '''
+            actions, mus = self.model._step(self.current_state, self.goal)
+            self.current_action = actions[0]
+            self.mus = mus
+            self.current_done = 0 # dones should come from env
+            '''
             if self.compute_Q:
                 sampled_action, self.Q = policy_output
                 self.current_action = sampled_action # np.argmax(action_vec)
@@ -85,6 +99,7 @@ class RolloutWorker:
                 #print("policy_output: {}".format(policy_output)) # 2 = left
                 sampled_action = policy_output
                 self.current_action = sampled_action #np.argmax(action_vec)
+            '''
         else:
             return
 
@@ -110,8 +125,10 @@ class RolloutWorker:
         #print("RLAgent reset parameter checking: {}".format(rospy.get_param('/RLAgent/reset')))
 
         # generate episodes
-        obs, acts, rewards, values = [], [], [], []
-        episode = dict(o=None, u=None, r=None, v=None)
+        obs, acts, rewards, values, dones, mus = [], [], [], [], [], []
+        achieved_goals, successes = [], []
+
+        episode = dict(o=None, u=None, r=None, d=None, mu=None)
         Qs = []
         while not rospy.is_shutdown():
             # Instead of doing this, I want to get the system_state from ModelT42
@@ -126,12 +143,16 @@ class RolloutWorker:
                     obs.append(np.expand_dims(np.array(self.current_state), 0))
                     one_hot_action = np.zeros(self.dims['u'])
                     one_hot_action[self.current_action] = 1.0
-                    acts.append(np.expand_dims(one_hot_action, 0))
+                    # acts.append(np.expand_dims(one_hot_action, 0))
+                    acts.append(np.expand_dims([self.dims['u']], 0))
+                    mus.append(self.mus)
                     rewards.append(np.expand_dims(np.array([self.current_reward]), 0))
+                    dones.append(np.expand_dims(np.array([self.current_done]), 0))
 
                     if self.compute_Q:
                         Qs.append(self.Q)
-
+                    print("current_action!!!!!!!!: {}".format(self.current_action))
+                    print("current_action!!!!!!!!: {}".format(one_hot_action))
                     rospy.loginfo('RLAgent sampled action: {}'.format(
                             ACT_CMDS[self.current_action]))
                     rla = RLAction(action=self.current_action)
@@ -148,9 +169,10 @@ class RolloutWorker:
             # system_state is ready for the next episode
             if self.system_state == 3 and len(obs) > 0:
                 print("System state is ready...return episode, starting a new episode")
-                episode['o'], episode['u'], episode['r'], episode['v'] = obs, acts, rewards, Qs
+                # episode['o'], episode['u'], episode['r'], episode['v'], episode['d'] = obs, acts, rewards, Qs, dones
+                episode['o'], episode['u'], episode['r'], episode['d'], episode['mu'] = obs, acts, rewards, dones, mus
                 if self.compute_Q:
-                    return convert_episode_to_batch_major(episode), np.mean(Qs)
+                    return convert_episode_to_batch_major(episode)  #, np.mean(Qs)
                 else:
                     return convert_episode_to_batch_major(episode)
             rate.sleep()

@@ -1,5 +1,6 @@
 #!/usr/bin/python
 import os
+import sys
 import numpy as np
 import rospy
 from common.policies import build_policy
@@ -56,22 +57,23 @@ def train(model, rollout_worker, n_epochs, n_batches, demo_file):
         save_loc = model.save_model()
         print('saved model at : {} after {} epochs'.format(save_loc, epoch+1))
 
-def learn(model, runner, nenvs, nsteps, replay_start, replay_ratio):
-    acer = Acer(runner, model)
+def learn(model, runner, nenvs, nsteps, replay_start, replay_ratio, total_timesteps):
+    log_interval = 10 # this is not used for now
+    acer = Acer(runner, model, log_interval)
     nbatch = nenvs*nsteps
     for acer.steps in range(0, total_timesteps, nbatch):
         acer.call(on_policy=True) #TODO: Modify generate_rollout in rollout.py for HER.
         if model.buffer.has_atleast(replay_start):
             n = np.random.poisson(replay_ratio)
             for _ in range(n):
-                acer.call(on_policy=False) # no rollout with T42 in this
+                acer.call(on_policy=False)  # no rollout with T42 in this
 
     return model
 
 if __name__ == '__main__':
     rospy.init_node(NODE)
     rospy.loginfo('started RLAgent node')
-    dims = {'o': 9, 'u': 9}
+    dims = {'o': 13, 'u': 9}
     model_name = 'il_policy_for_a2c' #'Jun2714152018_eps1_Jun2714312018_eps1_Jul816002018_eps1'
     checkpoint_path = os.path.join(MODEL_SAVE_PATH, model_name)
     n_epochs = 100000
@@ -84,32 +86,38 @@ if __name__ == '__main__':
     network = 'mlp'
     network_kargs = {}
     policy = build_policy(network, estimate_q=True, **network_kargs)
+    #TODO: Test this ILRL_acer.py upto here now that I changed the observation dimension.
+
     '''
     def __init__(self, policy, num_states, num_actions, nenvs, nsteps,
                  ent_coef, q_coef, gamma, max_grad_norm, lr,
                  rprop_alpha, rprop_epsilon, total_timesteps, lrschedule,
                  c, trust_region, alpha, delta): 
     '''
-    nenvs = 1; ent_coef = ; q_coef= ; gamma= ; max_grad_norm= ;
-    rprop_alpha= ; rprop_epsilon= ; total_timesteps= ;
-    trust_region=False; alpha= ; delta = ;
-    lrschedule= ; c = ; lr =;
-    batch_size=10000; bc_loss=False
+
+    nenvs = 1; ent_coef =0.01 ; q_coef=0.5 ; gamma=0.99 ; max_grad_norm=10 ;
+    rprop_alpha=0.99 ; rprop_epsilon=1e-5 ; total_timesteps=int(10e5) ;
+    trust_region=False; alpha=0.99 ; delta =1 ; # what are alpha and delta again?
+    lrschedule='linear' ; c =10.0 ; lr =7e-4
+    buffer_size=10000; bc_loss=False
     model = Model(policy, num_states=dims['o'], num_actions=dims['u'], nenvs=nenvs, nsteps=nsteps,
                   ent_coef=ent_coef, q_coef=q_coef, gamma=gamma, max_grad_norm=max_grad_norm, lr=lr,
                   rprop_alpha=rprop_alpha, rprop_epsilon=rprop_epsilon, total_timesteps=total_timesteps,
                   lrschedule=lrschedule, c=c, trust_region=trust_region, alpha=alpha, delta=delta,
-                  batch_size=batch_size, bc_loss=bc_loss)
+                  buffer_size=buffer_size, bc_loss=bc_loss)
 #                  bc_loss=bc_loss,
 #                  batch_size=40, demo_batch_size=20,
 #                  model_name=model_name, save_path=MODEL_SAVE_PATH, checkpoint_path=checkpoint_path, restore=True)
+    print('ggggggggg')
     print(model)
+    print('gggggggggggg')
+
     rollout_worker = RolloutWorker(model, dims, use_target_net=True, compute_Q=True, random_eps=random_eps)
 
-    n_batches = 10 #2
+    # n_batches = 10 #2
     demo_file = '/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/data/demodata.npy'
     #train(model=model, rollout_worker=rollout_worker, n_epochs=n_epochs, n_batches=n_batches, demo_file=demo_file)
-    replay_start = 1000 # int, the sampling from the replay buffer does not start until replay buffer has at least that many samples
-    replay_ratio = 4 # int, how many (on averages) batches of data fo sample from the replay buffer take after batch from the environment
+    replay_start = 1000  # int, the sampling from the replay buffer does not start until replay buffer has at least that many samples
+    replay_ratio = 4  # int, how many (on averages) batches of data fo sample from the replay buffer take after batch from the environment
     learn(model=model, runner=rollout_worker, nenvs=nenvs, nsteps=nsteps, replay_start=replay_start,
           replay_ratio=replay_ratio, total_timesteps=total_timesteps)
