@@ -5,12 +5,33 @@ import rospy
 from collections import deque
 import auto_data_collector.keyboard_encodings as ENC
 
+import time
+
 from rl_msgs.msg import RLStateReward, RLAction
+from common_msgs_gl.srv import SendInt
 from std_msgs.msg import Int32, UInt32
 from common_msgs_gl.msg import PointArray
 from utils import convert_episode_to_batch_major
 
 ACT_CMDS = ['up', 'down', 'left', 'right', 'left up', 'left down', 'right up', 'right down', 'stop']
+
+########## config for object resetter ############
+
+initialize_hand_srv_ = rospy.ServiceProxy('/manipulation_manager/set_mode', SendInt)
+reset_obj_srv_ = rospy.ServiceProxy('/system_reset/reset_object', SendInt)
+
+fake_keyboard_pub_ = rospy.Publisher('/keyboard_input', UInt32, queue_size=1)
+
+RAISE_CRANE_RESET =0
+LOWER_CRANE_OBJECT_READY =1
+
+GET_GRIPPER_READY = 0
+ALLOW_GRIPPER_TO_MOVE =1
+OPEN_GRIPPER =2
+
+seconds_until_next_reset = 8
+####################################################
+
 
 class RolloutWorker:
     def __init__(self, model, dims, rollout_batch_size=1,
@@ -32,15 +53,58 @@ class RolloutWorker:
         self.time_taken = 45  # This will give us a fresh start
         self.time_to_live = 45  # Determines how many cycles the movement will occur
 
+        # These will be enables later
+        self.enable = False
+        self.enable_fake_keyboard_ = False
+        self.master_tic = time.time()
+        self.initialized = False
+
+        # Determine if any modes are occuring
+        self.is_dropped_ = False
+        self.is_stuck_ = False
+
+        # Count how many of each occured
+        self.num_normal_ = 0
+        self.num_dropped_ = 0
+        self.num_stuck_ = 0
+        self.num_sliding = 0
+
+        # This is used to reset the motors if something bad occurs
+        self.load_history_ = []
+        self.load_history_length_ = 5
+        self.reset_to_save_motors = False
+        self.single_motor_save_ = []
+
+        self.recent_object_move_dist_ = 50  # Arbritrary value to start
+
 
         self.reset_all_rollouts()
         rospy.Subscriber('system/state', Int32, self.system_state_callback)
         rospy.Subscriber('rl_env/rl_state_reward', RLStateReward, self.state_reward_callback)
+        # rospy.Subscriber('rl_env/')
         self.ac_pub = rospy.Publisher('rl_agent/rl_action', RLAction, queue_size=1)
 
         self.fake_keyboard_pub_ = rospy.Publisher('/keyboard_input', UInt32, queue_size=1)
         # self.initial_config_state_pub = rospy.Publisher('/initial_config_state', PointArray, queue_size=1)
         # self.goal_config_state_pub = rospy.Publisher('/goal_config_state', PointArray, queue_size=1)
+
+        #### object should get ready here? ####
+        ### The hand should grasp the object firmly here ###
+        ### I should probably send some service call from terminal to start RL training?
+        time.sleep(4)
+        print("Opening the gripper")
+        initialize_hand_srv_(OPEN_GRIPPER) # let the system stop
+        time.sleep(8)
+        print("RAISE_CRANE_RESET")
+        reset_obj_srv_(RAISE_CRANE_RESET)
+        print("Grasping the object...")
+        initialize_hand_srv_(GET_GRIPPER_READY)
+        time.sleep(8)
+        print("lowering crane object ready")
+        reset_obj_srv_(LOWER_CRANE_OBJECT_READY)
+        time.sleep(1.5)
+
+
 
     def reset_rollout(self, i):
         """Resets the 'i'-th rollout environment
@@ -193,7 +257,8 @@ class RolloutWorker:
                     # TODO: How should I generate goals?
                     # TODO: self.goal should be filled here.
                     self.g = self.sample_goal() #TODO: Need to check the dimension of goal
-            if reset_flag:
+            # if reset_flag:
+            if self.enable and self.initialized == True:
                 if self.current_action is not None:  #
                     #print("self.current_state dim : {}, self.current_action dim : {}, self.current_reward.dim : {}".format(
                     #    self.current_state, self.current_action, self.current_reward
