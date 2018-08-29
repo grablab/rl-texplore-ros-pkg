@@ -54,8 +54,10 @@ void ModelT42::setupNode() {
     srvclnt_car_ref_ = node_handle_.serviceClient<common_msgs_gl::SendDoubleArray>("/visual_servoing/vel_ref");
     srvclnt_car_ref_.waitForExistence(ros::Duration(5));
 
+
+
     ros::param::get("/RLAgent/goal_range", goalRange);
-    ros::param::get("/RLAgent/num_rollouts", maxNumRollouts);
+//    ros::param::get("/RLAgent/num_rollouts", maxNumRollouts);
 
     string goalStr;
     ros::param::get("/RLAgent/goal", goalStr);
@@ -284,15 +286,23 @@ bool ModelT42::terminal() const {
 }
 
 void ModelT42::reset() {
-    // TODO: call reset again on drop? -> This should be taken care in python
+    // publish signal to object resetter
+    reachedEnd = false;
+    applyCount = 0;
+
+    cout << "successful env reset" << endl;
+}
+
+void ModelT42::reset_old() {
+    // reset without object resetter node
     // make sliding manager run getReady
     reachedEnd = false;
     applyCount = 0;
 
     bool resetFlag = false;
-//    cout << "Printing resetFlag: " << resetFlag << endl;
-//    ros::param::get("/RLAgent/reset", resetFlag);
-//    cout << "Printing resetFlag: " << resetFlag << endl;
+    cout << "Printing resetFlag: " << resetFlag << endl;
+    ros::param::get("/RLAgent/reset", resetFlag);
+    cout << "Printing resetFlag: " << resetFlag << endl;
     ros::param::set("/RLAgent/reset", resetFlag);
     numRollouts += 1;
 
@@ -318,23 +328,19 @@ void ModelT42::reset() {
 
     // wait for system mode to be "ready"
     while (systemState != 3 and counter < 600) {
-//        cout << "debuggin 3" << endl;
         ros::spinOnce();
-//        cout << "debuggin 3 after spinOnce()" << endl;
         r.sleep();
-//        cout << "debuggin 3 after sleep()" << endl;
         counter++;
     }
     if (systemState != 3) {
-//        cout << "debugging 4" << endl;
         throw std::runtime_error("[ModelT42-RLEnv] Failed to get ready");
     }
 
     cout << "waiting for /RLAgent/reset param set to true" << endl;
-//    while(!resetFlag) {
-//        ros::param::get("/RLAgent/reset", resetFlag);
-//        ros::Duration(2).sleep();
-//    }
+    while(!resetFlag) {
+        ros::param::get("/RLAgent/reset", resetFlag);
+        ros::Duration(2).sleep();
+    }
 
     // send start command to /system/mode service
     mode.request.data = 1;

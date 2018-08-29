@@ -29,6 +29,7 @@ public:
 
     virtual bool terminal() const;
     virtual void reset();
+    virtual void reset_old();
 
     virtual int getNumActions();
     virtual void getMinMaxFeatures(std::vector<float> *minFeat, std::vector<float> *maxFeat);
@@ -70,9 +71,9 @@ private:
     const bool extraReward;
     const bool noisy;
     const bool rewardSensor;
-    float goalRange = 20.;
-    int maxNumRollouts;
-    int numRollouts = 0;
+    float goalRange = 10.;
+    int maxNumRollouts = 30; // deprecated
+    int numRollouts = 0; //deprecated
     const int objMarkerId = 4;
     int systemState = 0;
 
