@@ -10,7 +10,7 @@ import time
 from rl_msgs.msg import RLStateReward, RLAction
 from common_msgs_gl.srv import SendInt
 from std_msgs.msg import Int32, UInt32
-from common_msgs_gl.msg import PointArray
+from marker_tracker.msg import ImageSpacePoseMsg
 from utils import convert_episode_to_batch_major
 
 ACT_CMDS = ['up', 'down', 'left', 'right', 'left up', 'left down', 'right up', 'right down', 'stop']
@@ -36,7 +36,7 @@ seconds_until_next_reset = 8
 class RolloutWorker:
     def __init__(self, model, dims, rollout_batch_size=1,
                  exploit=False, use_target_net=False, compute_Q=False, noise_eps=0.0,
-                 random_eps=0.0):
+                 random_eps=0.0, marker_space_markers=[0,1,2,3,4,5,6,7]):
         """
         :param policy (class instance): the policy that is used to act
         :param dims (dict of ints): the dimensions for observations (o) and actions (u)
@@ -45,6 +45,8 @@ class RolloutWorker:
         self.model = model; self.dims = dims; self.rollout_batch_size=rollout_batch_size;
         self.exploit = exploit; self.use_target_net = use_target_net; self.compute_Q = compute_Q
         self.noise_eps = noise_eps; self.random_eps = random_eps
+        self.marker_space_markers = marker_space_markers
+        self.current_config = None
 
         # For initializing hand/object configuration
         self.keyboardDict = ENC.Encodings
@@ -81,12 +83,27 @@ class RolloutWorker:
         self.reset_all_rollouts()
         rospy.Subscriber('system/state', Int32, self.system_state_callback)
         rospy.Subscriber('rl_env/rl_state_reward', RLStateReward, self.state_reward_callback)
-        # rospy.Subscriber('rl_env/')
-        self.ac_pub = rospy.Publisher('rl_agent/rl_action', RLAction, queue_size=1)
+        rospy.Subscriber("/marker_tracker/image_space_pose_msg", ImageSpacePoseMsg, self.marker_tracker_callback)
 
+        self.init_config_pub_ = rospy.Publisher("initial_config_state", ImageSpacePoseMsg, queue_size=1)
+        self.goal_config_pub_ = rospy.Publisher("goal_config_state", ImageSpacePoseMsg, queue_size=1)
+        self.ac_pub = rospy.Publisher('rl_agent/rl_action', RLAction, queue_size=1)
         self.fake_keyboard_pub_ = rospy.Publisher('/keyboard_input', UInt32, queue_size=1)
-        # self.initial_config_state_pub = rospy.Publisher('/initial_config_state', PointArray, queue_size=1)
-        # self.goal_config_state_pub = rospy.Publisher('/goal_config_state', PointArray, queue_size=1)
+
+    def marker_tracker_callback(self, data):
+        ids = sorted(self.marker_space_markers)
+        x = [0 for _ in range(len(ids))]
+        y = [0 for _ in range(len(ids))]
+        angles = [0. for _ in range(len(ids))]
+        for id_, pos_x, pos_y, angle in zip(data.ids, data.x, data.y, data.angles):
+            if id_ not in self.marker_space_markers:
+                continue
+            x[id_] = pos_x
+            y[id_] = pos_y
+            angles[id_] = angle
+        ispm = ImageSpacePoseMsg()
+        ispm.ids, ispm.x, ispm.y, ispm.angles = ids, x, y, angles
+        self.current_config = ispm
 
         #### object should get ready here? ####
         ### The hand should grasp the object firmly here ###
@@ -192,7 +209,7 @@ class RolloutWorker:
         # check dimensions of goal
         return 0
 
-    def initObjectPosition(self):
+    def init_object_position(self):
         # how to get keyboard stuff
         # self.fake_keyboard_pub_.publish(self.keyboardDict[self.selection_choices[self.current_selection]])
         '''
@@ -211,6 +228,8 @@ class RolloutWorker:
         print("Keyboard input: {}".format(self.selection_choices[self.current_selection]))
         
         self.time_taken = self.time_taken + 1
+        rospy.spin_once()  # allow current_config to be updated by callback
+        self.init_config_pub_.publish(self.current_config)
         #if self.time_taken < 20:
         #    return True
         #else:
@@ -248,7 +267,7 @@ class RolloutWorker:
             # Let the hand move
             if count_random_action_sent < 10 and self.system_state==2:
                 # self.initObjectPosition()
-                self.initObjectPosition()
+                self.init_object_position()
                 count_random_action_sent += 1
                 if count_random_action_sent == 10:
                     self.fake_keyboard_pub_.publish(self.keyboardDict["KEY_S_"])
