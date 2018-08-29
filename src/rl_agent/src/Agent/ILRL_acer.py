@@ -117,7 +117,7 @@ if __name__ == '__main__':
     # n_batches = 10 #2
     demo_file = '/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/data/demodata.npy'
     #train(model=model, rollout_worker=rollout_worker, n_epochs=n_epochs, n_batches=n_batches, demo_file=demo_file)
-    replay_start = 1000  # int, the sampling from the replay buffer does not start until replay buffer has at least that many samples
+    replay_start = 0 # 1000  # int, the sampling from the replay buffer does not start until replay buffer has at least that many samples
     replay_ratio = 4  # int, how many (on averages) batches of data fo sample from the replay buffer take after batch from the environment
     learn(model=model, runner=rollout_worker, nenvs=nenvs, nsteps=nsteps, replay_start=replay_start,
           replay_ratio=replay_ratio, total_timesteps=total_timesteps)

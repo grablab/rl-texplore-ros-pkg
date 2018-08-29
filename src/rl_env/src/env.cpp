@@ -161,7 +161,9 @@ void initEnvironment(){
   // ModelT42
   else if (strcmp(envType, "modelt42") == 0){
     desc.title = "Environment: ModelT42\n";
-    e = new ModelT42(rng);
+//    int stateSize = 17;
+    int stateSize = 21;
+    e = new ModelT42(rng, stateSize);
   }
 
   // four rooms with energy level

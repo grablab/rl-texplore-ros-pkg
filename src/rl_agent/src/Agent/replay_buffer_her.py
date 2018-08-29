@@ -15,7 +15,8 @@ class ReplayBuffer:
         # self.buffers = dict(o=[], u=[], r=[], d=[], mu=[])
         self.nsteps = nsteps + 1
         self.size = int(10E6)
-        self.buffer_shapes = {'o': 13, 'u': 1, 'r': 1, 'd': 1, 'mu': 9}
+        self.buffer_shapes = {'o': 13, 'u': 1, 'r': 1, 'done': 1, 'mu': 9, 'ag': 13,
+                              'drop': 1, 'g':13}
         self.buffers = {key: np.empty([self.size, self.nsteps, shape])
                         for key, shape in self.buffer_shapes.items()}
         # [num_of_episodes, nsteps, 13] if 'o'
@@ -38,11 +39,13 @@ class ReplayBuffer:
             # self.current_size is the number of episodes stored in Buffer
             # So this is taking all the data in the buffer
 
+
         buffers['o_2'] = buffers['o'][:, 1:, :] # [num_of_episodes, nsteps, 13] if 'o'
         buffers['ag_2'] = buffers['ag'][:, 1:, :]
 
         drop_time_steps = None  # Have to think how to incorporate this
-        transitions = self.sample_transitions(buffers, batch_size, drop_time_steps)
+        transitions = self.sample_transitions(buffers, batch_size) # this batch_size = nbatch = nevns*nsteps
+        # print("transitions: {}".format(transitions))
 
         for key in (['r', 'o_2', 'ag_2'] + list(self.buffers.keys())):
             assert key in transitions, "key %s missing from transitions" % key

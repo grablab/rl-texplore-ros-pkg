@@ -206,7 +206,20 @@ class Model(object):
         self.step = self.step_model.step
 
         def reward_fun(ag_2, g):
-            return 1
+            '''
+            :param ag_2: shape [nsteps, ag_2_dim]
+            :param g: shape [nsteps, g_dim]
+            :return:
+            '''
+            def goal_distance(goal_a, goal_b):
+                assert goal_a.shape == goal_b.shape
+                return np.linalg.norm(goal_a - goal_b, axis=-1)
+            print('ag_2.shape: {}, g.shape: {}'.format(ag_2.shape, g.shape))
+            d = goal_distance(ag_2, g)
+            print('goal_distance: {}'.format(d))
+            distance_threshold = 0.5
+            return - (d > distance_threshold).astype(np.float32)
+
         self.sample_transitions = make_sample_her_transitions(replay_strategy='future', replay_k=4, reward_fun=reward_fun)
         self.buffer = ReplayBuffer(buffer_size, nsteps, self.sample_transitions)
 
@@ -249,12 +262,12 @@ class Acer():
             episode = runner.generate_rollouts() #run()
             model.store_episode(episode)
             # obs, actions, rewards, mus, dones, masks = episode
-            obs, actions, rewards, mus, dones = episode['o'], episode['u'], episode['r'], episode['mu'], episode['d']
+            obs, actions, rewards, mus, dones = episode['o'], episode['u'], episode['r'], episode['mu'], episode['done']
             #if buffer is not None:
             #    buffer.put(obs, actions, rewards, mus, dones, masks)
         else:
             transitions = model.sample_batch(model.nbatch)
-            obs, rewards, actions, mus, dones = transitions['o'], transitions['r'], transitions['u'], transitions['mu'], transitions['dones']
+            obs, obs_2, rewards, actions, mus, dones = transitions['o'], transitions['o_2'], transitions['r'], transitions['u'], transitions['mu'], transitions['done']
             #obs, actions, rewards, mus, dones, masks = buffer.get()
 
         # reshape correctly
@@ -262,12 +275,28 @@ class Acer():
         print("actions.shape: {}".format(actions.shape))
         print("rewards.shape: {}".format(rewards.shape))
         print("dones.shape: {}".format(dones.shape))
+        if on_policy:
+            obs = np.squeeze(obs)
+            actions = np.squeeze(actions)[:-1]
+            rewards = np.squeeze(rewards)[:-1]
+            mus = np.squeeze(mus)[:-1]
+            dones = np.squeeze(dones)[1:]
+        else:
+            # Make obs for train from obs and obs_2
+            temp_obs = np.expand_dims(np.squeeze(obs_2)[-1], 0)
+            print("obs shape: {}, {}, {}".format(np.squeeze(obs).shape, np.squeeze(obs_2)[-1].shape, temp_obs.shape))
+            obs = np.concatenate([np.squeeze(obs), temp_obs])
+            actions = np.squeeze(actions)
+            rewards = np.squeeze(rewards)
+            mus = np.squeeze(mus)
+            dones = np.squeeze(dones)
 
-        obs = np.squeeze(obs)
-        actions = np.squeeze(actions)[:-1]
-        rewards = np.squeeze(rewards)[:-1]
-        mus = np.squeeze(mus)[:-1]
-        dones = np.squeeze(dones)[1:]
+        print("obs.shape: {}".format(obs.shape))
+        print("actions.shape: {}".format(actions.shape))
+        print("rewards.shape: {}".format(rewards.shape))
+        print("dones.shape: {}".format(dones.shape))
+
+
         '''
         obs = obs.reshape(runner.batch_ob_shape)
         actions = actions.reshape([runner.nbatch])

@@ -3,6 +3,22 @@
 #include <std_msgs/Float32MultiArray.h>
 #include <std_msgs/Float64MultiArray.h>
 
+
+//ModelT42::ModelT42(Random &rand, int stateSize):
+//        negReward(true),
+//        noisy(false),
+//        extraReward(true),
+//        rewardSensor(false),
+//        rng(rand),
+//        goalOption(false),
+//        gain_(0.3),
+//        s(stateSize)
+//{
+//    cout << "upupupupupupup" << endl;
+//    setupNode();
+//    reset();
+//}
+
 ModelT42::ModelT42(Random &rand, int stateSize):
         negReward(true),
         noisy(false),
@@ -13,20 +29,7 @@ ModelT42::ModelT42(Random &rand, int stateSize):
         gain_(0.3),
         s(stateSize)
 {
-    setupNode();
-    reset();
-}
-
-ModelT42::ModelT42(Random &rand):
-        negReward(true),
-        noisy(false),
-        extraReward(true),
-        rewardSensor(false),
-        rng(rand),
-        goalOption(false),
-        gain_(0.3),
-        s(17)
-{
+    cout << "down down down down stateSize " << stateSize << endl;
     setupNode();
     reset();
 }
@@ -35,6 +38,10 @@ ModelT42::~ModelT42() { }
 
 void ModelT42::setupNode() {
     sub_vs_vel_ref_ = node_handle_.subscribe("/marker_tracker/image_space_pose_msg",1,&ModelT42::callbackImageSpacePoseMsg, this);
+    // TODO: Think about how to fill s with contact point info as well as the regular marker observation info
+    // ToDO: Finish callback for contact point
+    sub_contact_point_obj_left = node_handle_.subscribe("/contact_point_detector/contact_point_object_left",1,&ModelT42::callbackContactPointObjectLeft,this);
+    sub_contact_point_obj_right = node_handle_.subscribe("/contact_point_detector/contact_point_object_right",1,&ModelT42::callbackContactPointObjectRight,this);
     sub_sd_sliding_detector = node_handle_.subscribe("/evaluate_policy/evaluate_policy",6,&ModelT42::callbackSliding, this);
     sub_sd_stuck_detector = node_handle_.subscribe("/stuck_detector/stuck_detector",6,&ModelT42::callbackStuck, this);
     sub_system_state = node_handle_.subscribe("/system/state",1,&ModelT42::callbackSystemState, this);
@@ -71,6 +78,17 @@ void ModelT42::callbackGripperLoad(std_msgs::Float32MultiArray msg) {
         cout << "load is too high" << endl;
         reachedEnd = true;
     }
+}
+
+void ModelT42::callbackContactPointObjectLeft(std_msgs::Int32MultiArray msg){
+//    cout << "callback contact point object left: " << msg << endl;
+//    cout << "gg: " << msg.data[0] << endl;
+    contactPointLeft[0] = coord_t(msg.data[0], msg.data[1]);
+}
+
+void ModelT42::callbackContactPointObjectRight(std_msgs::Int32MultiArray msg){
+//    cout << "callback contact point object right: " << msg << endl;
+    contactPointRight[0] = coord_t(msg.data[0], msg.data[1]);
 }
 
 
@@ -121,6 +139,19 @@ void ModelT42::callbackImageSpacePoseMsg(marker_tracker::ImageSpacePoseMsg msg) 
         sensation.push_back(markerAngle[0]);
         sensation.push_back(markerAngle[2]);
         sensation.push_back(markerAngle[4]);
+    }
+    else if (s.size() == 21)  {
+        for (auto &a: markerPos) { // this adds 12 values to sensation
+            sensation.push_back(a.first);
+            sensation.push_back(a.second);
+        }
+        sensation.push_back(markerAngle[0]);
+        sensation.push_back(markerAngle[2]);
+        sensation.push_back(markerAngle[4]);
+        sensation.push_back(contactPointLeft[0].first);
+        sensation.push_back(contactPointLeft[0].second);
+        sensation.push_back(contactPointRight[0].first);
+        sensation.push_back(contactPointRight[0].second);
     }
 //    sensation.push_back((int)lastSliding);
     setSensation(sensation);
@@ -181,7 +212,7 @@ float ModelT42::apply(int action) {
         stuck_state = false;
         return 0;
     }
-    if (reachedEnd || applyCount > 60) {
+    if (reachedEnd || applyCount > 40) {
         reset();
         return 0;
     }
@@ -253,7 +284,7 @@ bool ModelT42::terminal() const {
 }
 
 void ModelT42::reset() {
-    // TODO: call reset again on drop?
+    // TODO: call reset again on drop? -> This should be taken care in python
     // make sliding manager run getReady
     reachedEnd = false;
     applyCount = 0;
@@ -267,7 +298,7 @@ void ModelT42::reset() {
 
     common_msgs_gl::SendInt mode;
     mode.request.data = 0;
-    systemState = 4;
+    systemState = 4; // what's the meaning of this assignment? Isn't systemState automatically updated every time ModelT42::callbackSystemState is called?
 
     cout << "debugging 1" << endl;
     // send get_ready command to /system/mode node
@@ -300,10 +331,10 @@ void ModelT42::reset() {
     }
 
     cout << "waiting for /RLAgent/reset param set to true" << endl;
-    while(!resetFlag) {
-        ros::param::get("/RLAgent/reset", resetFlag);
-        ros::Duration(2).sleep();
-    }
+//    while(!resetFlag) {
+//        ros::param::get("/RLAgent/reset", resetFlag);
+//        ros::Duration(2).sleep();
+//    }
 
     // send start command to /system/mode service
     mode.request.data = 1;

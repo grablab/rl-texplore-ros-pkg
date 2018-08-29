@@ -13,13 +13,14 @@
 #include "std_msgs/Bool.h"
 #include "std_msgs/Float32MultiArray.h"
 #include "std_msgs/Int32.h"
+#include "std_msgs/Int32MultiArray.h"
 #include "marker_tracker/ImageSpacePoseMsg.h"
 
 class ModelT42: public Environment {
 public:
     /** Creates a ModelT42 domain */
     ModelT42(Random &rand, int stateSize);
-    ModelT42(Random &rand);
+//    ModelT42(Random &rand);
 
     virtual ~ModelT42();
 
@@ -37,6 +38,8 @@ public:
     virtual void callbackStuck(std_msgs::Bool msg);
     virtual void callbackSystemState(std_msgs::Int32 msg);
     virtual void callbackGripperLoad(std_msgs::Float32MultiArray msg);
+    virtual void callbackContactPointObjectLeft(std_msgs::Int32MultiArray msg);
+    virtual void callbackContactPointObjectRight(std_msgs::Int32MultiArray msg);
     //virtual void callbackCarRef(std_msgs::Float64MultiArray msg);
     void setupNode();
 
@@ -48,6 +51,8 @@ public:
     ros::Subscriber sub_sd_stuck_detector;
     ros::Subscriber sub_system_state;
     ros::Subscriber sub_gripper_load;
+    ros::Subscriber sub_contact_point_obj_left;
+    ros::Subscriber sub_contact_point_obj_right;
     ros::Publisher pub_car_ref;
     ros::ServiceClient srvclnt_set_mode_;
     ros::ServiceClient srvclnt_car_ref_;
@@ -70,6 +75,7 @@ private:
     int numRollouts = 0;
     const int objMarkerId = 4;
     int systemState = 0;
+
     actuator_command lastAction = STOP;
     bool lastSliding = false;
     bool stuck_state = false;
@@ -82,6 +88,8 @@ private:
     float objAngle = 0.0;
     std::vector<coord_t> markerPos{coord_t(0,0),coord_t(0,0),coord_t(0,0),coord_t(0,0),coord_t(0,0),coord_t(0,0),coord_t(0,0)};
     std::vector<float> markerAngle{0., 0., 0., 0., 0., 0., 0.};
+    std::vector<coord_t> contactPointLeft{coord_t(0,0)};
+    std::vector<coord_t> contactPointRight{coord_t(0,0)};
 
     const bool goalOption;
 
