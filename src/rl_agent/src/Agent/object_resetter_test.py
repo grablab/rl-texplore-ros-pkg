@@ -117,7 +117,7 @@ class AutoDataCollectorNode():
                 if self.enable_fake_keyboard_:
                     self.fake_keyboard_call_()
             r.sleep()
-        rospy.spin()
+
 
     def fake_keyboard_call_(self):
 

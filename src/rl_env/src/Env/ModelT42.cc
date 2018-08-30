@@ -39,7 +39,6 @@ ModelT42::~ModelT42() { }
 void ModelT42::setupNode() {
     sub_vs_vel_ref_ = node_handle_.subscribe("/marker_tracker/image_space_pose_msg",1,&ModelT42::callbackImageSpacePoseMsg, this);
     // TODO: Think about how to fill s with contact point info as well as the regular marker observation info
-    // ToDO: Finish callback for contact point
     sub_contact_point_obj_left = node_handle_.subscribe("/contact_point_detector/contact_point_object_left",1,&ModelT42::callbackContactPointObjectLeft,this);
     sub_contact_point_obj_right = node_handle_.subscribe("/contact_point_detector/contact_point_object_right",1,&ModelT42::callbackContactPointObjectRight,this);
     sub_sd_sliding_detector = node_handle_.subscribe("/evaluate_policy/evaluate_policy",6,&ModelT42::callbackSliding, this);
@@ -302,8 +301,7 @@ void ModelT42::reset_old() {
     bool resetFlag = false;
     cout << "Printing resetFlag: " << resetFlag << endl;
     ros::param::get("/RLAgent/reset", resetFlag);
-    cout << "Printing resetFlag: " << resetFlag << endl;
-    ros::param::set("/RLAgent/reset", resetFlag);
+
     numRollouts += 1;
 
     common_msgs_gl::SendInt mode;
@@ -337,10 +335,10 @@ void ModelT42::reset_old() {
     }
 
     cout << "waiting for /RLAgent/reset param set to true" << endl;
-    while(!resetFlag) {
-        ros::param::get("/RLAgent/reset", resetFlag);
-        ros::Duration(2).sleep();
-    }
+//    while(!resetFlag) {
+//        ros::param::get("/RLAgent/reset", resetFlag);
+//        ros::Duration(2).sleep();
+//    }
 
     // send start command to /system/mode service
     mode.request.data = 1;

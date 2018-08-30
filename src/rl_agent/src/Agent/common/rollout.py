@@ -7,9 +7,12 @@ import auto_data_collector.keyboard_encodings as ENC
 
 import time
 
+from std_srvs.srv import SetBool
 from rl_msgs.msg import RLStateReward, RLAction
 from common_msgs_gl.srv import SendInt
 from std_msgs.msg import Int32, UInt32
+from std_msgs.msg import Bool
+from std_msgs.msg import Float32MultiArray
 from marker_tracker.msg import ImageSpacePoseMsg
 from utils import convert_episode_to_batch_major
 
@@ -85,43 +88,58 @@ class RolloutWorker:
         rospy.Subscriber('rl_env/rl_state_reward', RLStateReward, self.state_reward_callback)
         rospy.Subscriber("/marker_tracker/image_space_pose_msg", ImageSpacePoseMsg, self.marker_tracker_callback)
 
+        rospy.Subscriber("/stuck_drop_detector/object_dropped_msg", Bool, self.itemDroppedCallback)
+        rospy.Subscriber("/stuck_drop_detector/object_stuck_msg", Bool, self.itemStuckCallback)
+        rospy.Subscriber("/stuck_drop_detector/object_move_dist", Int32, self.objectMoveDist)
+        rospy.Subscriber("/gripper/load", Float32MultiArray, self.gripperLoadCallback)
+
         self.init_config_pub_ = rospy.Publisher("initial_config_state", ImageSpacePoseMsg, queue_size=1)
         self.goal_config_pub_ = rospy.Publisher("goal_config_state", ImageSpacePoseMsg, queue_size=1)
         self.ac_pub = rospy.Publisher('rl_agent/rl_action', RLAction, queue_size=1)
         self.fake_keyboard_pub_ = rospy.Publisher('/keyboard_input', UInt32, queue_size=1)
+
+
+        ### The hand should grasp the object firmly when enable_data_save() is called ###
+        time.sleep(5)
+        print("Opening the gripper")
+        initialize_hand_srv_(OPEN_GRIPPER)  # let the system stop
+        time.sleep(8)
+        print("RAISE_CRANE_RESET")
+        reset_obj_srv_(RAISE_CRANE_RESET)
+        time.sleep(5)
+        print("Grasping the object...")
+        initialize_hand_srv_(GET_GRIPPER_READY)
+        time.sleep(8)
+        print("lowering crane object ready")
+        reset_obj_srv_(LOWER_CRANE_OBJECT_READY)
+        time.sleep(2)
+
+        ### Send True from terminal to start RL training.
+        enable_srv_ = rospy.Service("/auto_data_collector/enable_collection", SetBool, self.enable_data_save)
+
+
+
+    def enable_data_save(self, req):
+        self.enable = req.data
+        if self.enable == True:
+            self.initialized = True
+
+        return [self.enable, "Successfully changed enable bool"]
 
     def marker_tracker_callback(self, data):
         ids = sorted(self.marker_space_markers)
         x = [0 for _ in range(len(ids))]
         y = [0 for _ in range(len(ids))]
         angles = [0. for _ in range(len(ids))]
-        for id_, pos_x, pos_y, angle in zip(data.ids, data.x, data.y, data.angles):
+        for id_, pos_x, pos_y, angle in zip(data.ids, data.posx, data.posy, data.angles):
             if id_ not in self.marker_space_markers:
                 continue
             x[id_] = pos_x
             y[id_] = pos_y
             angles[id_] = angle
         ispm = ImageSpacePoseMsg()
-        ispm.ids, ispm.x, ispm.y, ispm.angles = ids, x, y, angles
+        ispm.ids, ispm.posx, ispm.posy, ispm.angles = ids, x, y, angles
         self.current_config = ispm
-
-        #### object should get ready here? ####
-        ### The hand should grasp the object firmly here ###
-        ### I should probably send some service call from terminal to start RL training?
-        time.sleep(4)
-        print("Opening the gripper")
-        initialize_hand_srv_(OPEN_GRIPPER) # let the system stop
-        time.sleep(8)
-        print("RAISE_CRANE_RESET")
-        reset_obj_srv_(RAISE_CRANE_RESET)
-        print("Grasping the object...")
-        initialize_hand_srv_(GET_GRIPPER_READY)
-        time.sleep(8)
-        print("lowering crane object ready")
-        reset_obj_srv_(LOWER_CRANE_OBJECT_READY)
-        time.sleep(1.5)
-
-
 
     def reset_rollout(self, i):
         """Resets the 'i'-th rollout environment
@@ -132,11 +150,12 @@ class RolloutWorker:
         self.achieved_goal = None
         self.current_reward = 0
         self.current_done = 0
-        self.current_drop = 1
+        self.current_drop = 0
+        self.current_stuck = 0
         self.goal = None
         self.Q = None
         self.terminated = False
-        self.system_state = None
+        # self.system_state =
         self.Q_history = deque()
 
     def reset_all_rollouts(self):
@@ -168,9 +187,11 @@ class RolloutWorker:
         return s
 
     def system_state_callback(self, data):
+        print("system_state callback: {}".format(data.data))
         self.system_state = data.data
 
     def state_reward_callback(self, sr):
+        print("Is this called at all?????????????????????????????")
         if not self.terminated:
             if sr.terminal:
                 self.terminated = True
@@ -189,6 +210,7 @@ class RolloutWorker:
                                                    use_target_net=self.use_target_net)
             '''
             actions, mus = self.model._step(self.current_state, self.goal)
+            print("in state_reward_callback, actions[0]: {}".format(actions[0]))
             self.current_action = actions[0]
             self.mus = mus
             self.current_done = 0 # dones should come from env
@@ -223,13 +245,16 @@ class RolloutWorker:
             self.current_selection = randint(1, len(self.selection_choices) - 1)
             self.time_taken = 0
             new_value = True
- 
-        self.fake_keyboard_pub_.publish(self.keyboardDict[self.selection_choices[self.current_selection]])
-        print("Keyboard input: {}".format(self.selection_choices[self.current_selection]))
+
+        if self.selection_choices[self.current_selection] in {'KEYX', 'KEYXX', 'KEYXXX'}:
+            pass
+        else:
+            self.fake_keyboard_pub_.publish(self.keyboardDict[self.selection_choices[self.current_selection]])
+            print("Keyboard input: {}".format(self.selection_choices[self.current_selection]))
         
         self.time_taken = self.time_taken + 1
-        rospy.spin_once()  # allow current_config to be updated by callback
-        self.init_config_pub_.publish(self.current_config)
+        # rospy.spin_once()  # allow current_config to be updated by callback
+
         #if self.time_taken < 20:
         #    return True
         #else:
@@ -240,7 +265,7 @@ class RolloutWorker:
          acting on it accordingly.
          **NOTE** For ModelT42, rollout_batch_size is 1. For simulation, it could be larger than 1.
          """
-        self.reset_all_rollouts()
+        #self.reset_all_rollouts()
         rate = rospy.Rate(5)  # publishes action every .2 seconds
 
         # Set /RLAgent/reset true
@@ -254,17 +279,18 @@ class RolloutWorker:
 
         # generate episodes
         obs, acts, rewards, values, dones, mus, drops = [], [], [], [], [], [], []
-        achieved_goals, successes, goals = [], [], []
+        achieved_goals, successes, goals, stucks = [], [], [], []
 
-        episode = dict(o=None, u=None, r=None, done=None, mu=None, ag=None, drop=None, g=None)
+        episode = dict(o=None, u=None, r=None, done=None, mu=None, ag=None, drop=None, g=None, stuck=None)
         Qs = []
-        init_flag = True
         count_random_action_sent = 0
         while not rospy.is_shutdown():
             # Instead of doing this, I want to get the system_state from ModelT42
             reset_flag = rospy.get_param('/RLAgent/reset')
             #self.initObjectPosition()
             # Let the hand move
+            print("reset_flag: {}".format(reset_flag))
+            print("system_state: {}, self.enable: {}, self.initialized: {}".format(self.system_state, self.enable, self.initialized))
             if count_random_action_sent < 10 and self.system_state==2:
                 # self.initObjectPosition()
                 self.init_object_position()
@@ -273,12 +299,15 @@ class RolloutWorker:
                     self.fake_keyboard_pub_.publish(self.keyboardDict["KEY_S_"])
                     # initial_config = PointArray()
                     # initial_config.x = []
+                    print("printing current_config: {}".format(self.current_config))
+                    self.init_config_pub_.publish(self.current_config)
                     # TODO: How should I generate goals?
                     # TODO: self.goal should be filled here.
                     self.g = self.sample_goal() #TODO: Need to check the dimension of goal
             # if reset_flag:
-            if self.enable and self.initialized == True:
-                if self.current_action is not None:  #
+            if self.enable and self.initialized:
+                print("self.current_action: {}".format(self.current_action))
+                if True: #self.current_action is not None:  #
                     #print("self.current_state dim : {}, self.current_action dim : {}, self.current_reward.dim : {}".format(
                     #    self.current_state, self.current_action, self.current_reward
                     #))
@@ -294,7 +323,34 @@ class RolloutWorker:
                     mus.append(self.mus)
                     rewards.append(np.expand_dims(np.array([self.current_reward]), 0))
                     dones.append(np.expand_dims(np.array([self.current_done]), 0))
-                    drops.append(np.expand_dims(np.array([self.current_drop]), 0))
+
+                    if self.is_dropped_ or self.is_stuck_ or self.reset_to_save_motors == True:
+                        # resp = record_hand_srv_(DROP_CASE)
+                        drops.append(np.expand_dims(np.array([int(self.is_dropped_)]), 0))
+                        stucks.append(np.expand_dims(np.array([int(self.is_stuck_ or self.reset_to_save_motors)]), 0))
+                        if self.is_dropped_:
+                            print("Dropped Object")
+                            rospy.loginfo("Dropped Object")
+                        if self.is_stuck_ or self.reset_to_save_motors == True:
+                            print("Got stuck!!!!")
+                            rospy.loginfo("Stuck Object")
+                            self.reset_to_save_motors == False
+
+                        self.resetObject()
+                        # TODO: Check how I should return episode here.
+                        # I think I can just return episode right here without caring about the system_state
+                        # because this generate_rollout function is from ILRL_acer.py
+                        # self.num_dropped_ = self.num_dropped_ + 1
+                        print("Returning an episode....")
+                        # TODO: I should fill out the np array thing if the length of the array is not full.
+                        episode['o'], episode['u'], episode['r'], episode['done'] = obs, acts, rewards, dones
+                        episode['mu'], episode['ag'], episode['drop'], episode['g'], episode['stuck'] = mus, achieved_goals, drops, goals, stucks
+                        if self.is_episode_shape_ok(episode):
+                            episode = self.fill_episode_with_zeros(episode)
+                        return convert_episode_to_batch_major(episode)
+                    else:
+                        drops.append(np.expand_dims(np.array([int(self.is_dropped_)]), 0))
+                        stucks.append(np.expand_dims(np.array([int(self.is_stuck_ or self.reset_to_save_motors)]), 0))
 
                     if self.compute_Q:
                         Qs.append(self.Q)
@@ -318,11 +374,90 @@ class RolloutWorker:
                 print("System state is ready...return episode, starting a new episode")
                 # episode['o'], episode['u'], episode['r'], episode['v'], episode['d'] = obs, acts, rewards, Qs, dones
                 episode['o'], episode['u'], episode['r'], episode['done'] = obs, acts, rewards, dones
-                episode['mu'], episode['ag'], episode['drop'], episode['g'] = mus, achieved_goals, drops, goals
+                episode['mu'], episode['ag'], episode['drop'], episode['g'], episode['stuck'] = mus, achieved_goals, drops, goals, stucks
                 if self.compute_Q:
                     return convert_episode_to_batch_major(episode)  #, np.mean(Qs)
                 else:
                     return convert_episode_to_batch_major(episode)
 
-
             rate.sleep()
+        rospy.spin()
+
+    def is_episode_shape_ok(self, episode):
+        #TODO: finish this funciton
+        return 1
+
+    def fill_episode_with_zeros(self, episode):
+        #TODO: Finish this function
+        return episode
+
+    def itemDroppedCallback(self, msg):
+        self.is_dropped_ = msg.data
+
+    def itemStuckCallback(self, msg):
+        self.is_stuck_ = msg.data
+
+    def objectMoveDist(self, msg):
+        self.object_move_dist_ = msg.data
+
+    def gripperLoadCallback(self, msg):  # We will only keep track of when load history is exceeded
+        #print("gripperLoad: {}")
+        history = msg.data
+        if len(history) > 0:
+            # Do the two motor case first
+            if len(self.load_history_) >= self.load_history_length_:
+                self.load_history_.pop(0)  # Remove the first one
+
+            if history[0] < (-800) and history[1] < (-800):
+                self.load_history_.append(1)
+            else:
+                self.load_history_.append(0)
+
+            # Now do the two motor case
+            if len(self.single_motor_save_) >= self.load_history_length_ + 20:
+                self.single_motor_save_.pop(0)  # Remove the first
+
+            temp0 = history[0] < (-800)
+            temp1 = history[1] < (-800)
+            # print("gripperLoad: {}, {}".format(history[0], history[1]))
+            if abs(history[0]) > 750 or abs(history[1]) > 750:
+                print("ggg load is too much: {}, {}".format(history[0], history[1]))
+                self.reset_to_save_motors = True
+            else:
+                self.reset_to_save_motors = False
+
+    def resetObject(self):
+        print("resetting object!!!!!!!!!!!!!!!!!!!!!1")
+        time_to_break = False
+        self.enable_fake_keyboard_= False
+        self.enable = False
+        fake_keyboard_pub_.publish(self.keyboardDict["KEY_S_"])
+        initialize_hand_srv_(OPEN_GRIPPER) # let the system stop
+        time.sleep(8)
+
+        while time_to_break == False:
+            resp =  reset_obj_srv_(RAISE_CRANE_RESET)
+            time.sleep(5)
+            tic = time.time()
+            print("self.object_move_dist: {}".format(self.object_move_dist_))
+            while self.object_move_dist_ >15:
+                toc = time.time()
+                time.sleep(0.5)
+                if (toc - tic > seconds_until_next_reset):
+                    break
+            if self.object_move_dist_ <=15:
+                time_to_break=True
+
+        #Now we can close the fingers and wait for the grasp
+        print("Getting gripper ready")
+        initialize_hand_srv_(GET_GRIPPER_READY)
+        time.sleep(8)
+        print("lowering crane object ready")
+        reset_obj_srv_(LOWER_CRANE_OBJECT_READY)
+        time.sleep(1.5)
+        #time.sleep(10)
+        print("allowing gripper to move")
+        initialize_hand_srv_(ALLOW_GRIPPER_TO_MOVE)
+        self.enable_fake_keyboard_ = True
+        self.enable = True
+        self.master_tic = time.time()
