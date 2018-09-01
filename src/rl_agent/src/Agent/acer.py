@@ -260,6 +260,11 @@ class Acer():
         runner, model, buffer, steps = self.runner, self.model, self.buffer, self.steps
         if on_policy:
             episode = runner.generate_rollouts() #run()
+            print("printing episode['drop'][0][0]: {}".format(episode['drop'][0][0]))
+            print("printing episode['stuck'][0][0]: {}".format(episode['stuck'][0][0]))
+            if episode['drop'][0][0][0] == 1 or episode['stuck'][0][0][0] == 1:
+                print("Drop happened at time step 1. Ignoring this episode...")
+                return
             model.store_episode(episode)
             # obs, actions, rewards, mus, dones, masks = episode
             obs, actions, rewards, mus, dones = episode['o'], episode['u'], episode['r'], episode['mu'], episode['done']

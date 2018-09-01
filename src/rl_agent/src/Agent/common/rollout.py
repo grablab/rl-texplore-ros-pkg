@@ -117,6 +117,7 @@ class RolloutWorker:
         ### Send True from terminal to start RL training.
         enable_srv_ = rospy.Service("/auto_data_collector/enable_collection", SetBool, self.enable_data_save)
 
+        print('self.model.nbatch: {}'.format(self.model.nbatch))
 
 
     def enable_data_save(self, req):
@@ -246,12 +247,15 @@ class RolloutWorker:
             self.time_taken = 0
             new_value = True
 
-        if self.selection_choices[self.current_selection] in {'KEYX', 'KEYXX', 'KEYXXX'}:
+        if self.selection_choices[self.current_selection] in {'KEYX', 'KEYXX', 'KEYXXX', 'KEY_S_'}:
             pass
         else:
             self.fake_keyboard_pub_.publish(self.keyboardDict[self.selection_choices[self.current_selection]])
             print("Keyboard input: {}".format(self.selection_choices[self.current_selection]))
-        
+
+        if self.is_dropped_ or self.is_stuck_ or self.reset_to_save_motors == True:
+            self.resetObject()
+
         self.time_taken = self.time_taken + 1
         # rospy.spin_once()  # allow current_config to be updated by callback
 
@@ -345,12 +349,20 @@ class RolloutWorker:
                         # TODO: I should fill out the np array thing if the length of the array is not full.
                         episode['o'], episode['u'], episode['r'], episode['done'] = obs, acts, rewards, dones
                         episode['mu'], episode['ag'], episode['drop'], episode['g'], episode['stuck'] = mus, achieved_goals, drops, goals, stucks
-                        if self.is_episode_shape_ok(episode):
+                        if not self.is_episode_shape_ok(episode):
                             episode = self.fill_episode_with_zeros(episode)
                         return convert_episode_to_batch_major(episode)
                     else:
                         drops.append(np.expand_dims(np.array([int(self.is_dropped_)]), 0))
                         stucks.append(np.expand_dims(np.array([int(self.is_stuck_ or self.reset_to_save_motors)]), 0))
+
+                    if len(acts) == self.model.nbatch + 1:
+                        self.resetObject()
+                        print("Returning an episode....")
+                        # TODO: I should fill out the np array thing if the length of the array is not full.
+                        episode['o'], episode['u'], episode['r'], episode['done'] = obs, acts, rewards, dones
+                        episode['mu'], episode['ag'], episode['drop'], episode['g'], episode['stuck'] = mus, achieved_goals, drops, goals, stucks
+                        return convert_episode_to_batch_major(episode)
 
                     if self.compute_Q:
                         Qs.append(self.Q)
@@ -381,14 +393,25 @@ class RolloutWorker:
                     return convert_episode_to_batch_major(episode)
 
             rate.sleep()
-        rospy.spin()
+        #rospy.spin()
 
     def is_episode_shape_ok(self, episode):
         #TODO: finish this funciton
-        return 1
+        print("len(episode['o']).shape: {}".format(len(episode['o'])))
+        if len(episode['o']) == self.model.nbatch+1:
+            return True
+        else:
+            return False
 
     def fill_episode_with_zeros(self, episode):
         #TODO: Finish this function
+        for key, val in episode.items():
+            while len(episode[key]) <= self.model.nbatch:
+                temp_shape = episode[key][0].shape
+                print("temp_shape: {}".format(temp_shape))
+                episode[key].append(np.zeros(temp_shape))
+            print("len(episode[key]): {}".format(len(episode[key])))
+        # all the length of episodes are self.model.nbatch + 1
         return episode
 
     def itemDroppedCallback(self, msg):
@@ -460,4 +483,6 @@ class RolloutWorker:
         initialize_hand_srv_(ALLOW_GRIPPER_TO_MOVE)
         self.enable_fake_keyboard_ = True
         self.enable = True
+        self.is_dropped_= False
+        self.is_stuck_ = False
         self.master_tic = time.time()

@@ -18,27 +18,41 @@ def make_sample_her_transitions(replay_strategy, replay_k, reward_fun):
         T = episode_batch['u'].shape[1]
         rollout_batch_size = episode_batch['u'].shape[0]
         print("rollout_batch_size in her.py: {}".format(rollout_batch_size))
-        drop_time_steps = episode_batch['drop'][0][:batch_size]
-        drop_time_steps = np.squeeze(drop_time_steps)
+        #drop_time_steps = episode_batch['drop'][0][:batch_size]
+        drop_time_steps = episode_batch['drop_time_steps']
+        print("printing the shape of episode_batch['drop_time_steps']: {}".format(episode_batch['drop_time_steps']))
+        drop_time_steps = drop_time_steps.reshape(-1)
 
         # Select which episodes and time steps (t_samples) to use
         ## t_samples
         ## randint(low, high, size) picks 'size' number of random integers from [low, high-1]
         episode_idxs = np.random.randint(0, rollout_batch_size, batch_size)
+
         print("drop_time_steps: {}".format(drop_time_steps))
         print("ggg: {}".format(drop_time_steps[episode_idxs[0]]))
         print("ggg: {}".format(np.random.randint(drop_time_steps[episode_idxs[0]])))
         print("ggg: {}".format(np.random.randint(drop_time_steps[episode_idxs[i]]) for i in range(batch_size)))
+        # Shouldn't this t_samples be the same size as rollout_batch_size?
         t_samples = np.array([np.random.randint(drop_time_steps[episode_idxs[i]]) for i in range(batch_size)])
-        transitions = {key: episode_batch[key][episode_idxs, t_samples].copy() for key in episode_batch.keys()}
+        print("drop_time_steps[episode_idxs[0]]".format(drop_time_steps[episode_idxs[0]]))
+        drop_time_steps_subset = np.array([[drop_time_steps[episode_idxs[i]] for i in range(batch_size)]])
+        drop_time_steps_subset = drop_time_steps_subset.reshape(-1)
+
+        transitions = {}
+        for key in episode_batch.keys():
+            if key == 'drop_time_steps':
+                continue
+            transitions[key] = episode_batch[key][episode_idxs, t_samples].copy()
+        # transitions = {key: episode_batch[key][episode_idxs, t_samples].copy() for key in episode_batch.keys()}
 
         # Select future time indexes proportional with probability future_p. These
         # will be used for HER replay by substituting in future goals.
         her_indexes = np.where(np.random.uniform(size=batch_size) < future_p)
         print("t_samples.shape: {}".format(t_samples.shape))
+        print("drop_time_steps_subset.shape: {}".format(drop_time_steps_subset.shape))
         print("drop_time_steps.shape: {}".format(drop_time_steps.shape))
-        assert drop_time_steps.shape == t_samples.shape
-        future_offset = np.random.uniform(size=batch_size) * (drop_time_steps - t_samples)
+        assert drop_time_steps_subset.shape == t_samples.shape
+        future_offset = np.random.uniform(size=batch_size) * (drop_time_steps_subset - t_samples)
         future_offset = future_offset.astype(int)
         print("t_samples.shape: {}".format(t_samples.shape))
         print("future_offset.shape: {}".format(future_offset.shape))

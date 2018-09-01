@@ -19,6 +19,7 @@ class ReplayBuffer:
                               'drop': 1, 'g':13}
         self.buffers = {key: np.empty([self.size, self.nsteps, shape])
                         for key, shape in self.buffer_shapes.items()}
+        self.buffers['drop_time_steps'] = np.empty([self.size, 1])
         # [num_of_episodes, nsteps, 13] if 'o'
         self.sample_transitions = sample_transitions
         self._maxsize = size
@@ -27,7 +28,7 @@ class ReplayBuffer:
         self.current_size = 0  # counts the number of episodes stored in Buffer
 
     def has_atleast(self, size):
-        return self.num_in_buffer >= size
+        return self.current_size >= size
 
     def sample(self, batch_size):
         """Returns a dict {key: array(batch_size x shapes[key])}
@@ -47,8 +48,16 @@ class ReplayBuffer:
         transitions = self.sample_transitions(buffers, batch_size) # this batch_size = nbatch = nevns*nsteps
         # print("transitions: {}".format(transitions))
 
-        for key in (['r', 'o_2', 'ag_2'] + list(self.buffers.keys())):
+        print("transitions.keys() : {}".format(transitions.keys()))
+        new_transitions = list(set(['r', 'o_2', 'ag_2'] + list(self.buffers.keys())) - set('drop_time_steps'))
+        print("self.buffers.keys():{}".format(self.buffers.keys()))
+        print("new transitions.keys() : {}".format(new_transitions))
+        '''
+        for key in (set(['r', 'o_2', 'ag_2'] + list(self.buffers.keys())) - set('drop_time_steps')):
+            print("what is going on")
+            print(key)
             assert key in transitions, "key %s missing from transitions" % key
+        '''
 
         return transitions
 
@@ -62,9 +71,27 @@ class ReplayBuffer:
         batch_size = batch_sizes[0]
         idxs = self._get_storage_idx(batch_size)
         for key in self.buffers.keys():
-            print('key: {}, batch shape: {}, buffer shape: {}'.format(key, episode_batch[key].shape, self.buffers[key][idxs].shape))
-            print('idxs: {}, batch_size: {}'.format(idxs, batch_size))
-            self.buffers[key][idxs] = episode_batch[key][0] #.reshape(batch_size, self.buffer_shapes[key])
+            if key == 'drop_time_steps':
+                continue
+            else:
+                print('key: {}, batch shape: {}, buffer shape: {}'.format(key, episode_batch[key].shape, self.buffers[key][idxs].shape))
+                print('idxs: {}, batch_size: {}'.format(idxs, batch_size))
+                self.buffers[key][idxs] = episode_batch[key][0] #.reshape(batch_size, self.buffer_shapes[key])
+        print("printing out episode_batch['drop']: {}".format(np.squeeze(episode_batch['drop'])))
+        print("The index of 'drop' in episode {} is...".format(idxs))
+        # TODO intergrate this drop thing with stuck
+        if np.all(np.squeeze(episode_batch['drop'])==0) and np.all(np.squeeze(episode_batch['stuck'])==0): # checking if every element is zero
+            print("Neither drop nor stuck didn't happen")
+            self.buffers['drop_time_steps'][idxs] = self.nsteps - 1 # getting the index for HER drop_time_steps
+        else:
+            if not np.all(np.squeeze(episode_batch['drop'])==0):
+                print("drop happened")
+                self.buffers['drop_time_steps'][idxs] = np.where(np.squeeze(episode_batch['drop'])==1)[0][0]
+            if not np.all(np.squeeze(episode_batch['stuck'])==0):
+                print("stuck happened")
+                self.buffers['drop_time_steps'][idxs] = np.where(np.squeeze(episode_batch['stuck'])==1)[0][0]
+        # print("ggg: {}".format(np.where(np.squeeze(episode_batch['drop'])==1)))
+        print("the index: {}".format(self.buffers['drop_time_steps'][idxs]))
         # self.n_transitions_stored += batch_size * self.T
 
     def store_episode_a2c(self, episode_batch):

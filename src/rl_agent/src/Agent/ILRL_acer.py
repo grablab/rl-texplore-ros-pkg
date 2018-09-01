@@ -62,7 +62,7 @@ def learn(model, runner, nenvs, nsteps, replay_start, replay_ratio, total_timest
     acer = Acer(runner, model, log_interval)
     nbatch = nenvs*nsteps
     for acer.steps in range(0, total_timesteps, nbatch):
-        acer.call(on_policy=True) #TODO: Modify generate_rollout in rollout.py for HER.
+        acer.call(on_policy=True)  # TODO: Modify generate_rollout in rollout.py for HER.
         if model.buffer.has_atleast(replay_start):
             n = np.random.poisson(replay_ratio)
             for _ in range(n):
@@ -79,9 +79,9 @@ if __name__ == '__main__':
     n_epochs = 100000
     random_eps = 0.1
     bc_loss = True #False
-    nsteps = 40 # batch_size in mlp.py I guess?
-    batch_size = 40
-    demo_batch_size = 40
+    nsteps = 6 # batch_size in mlp.py I guess? -> number of rollout steps
+    batch_size = 40      # Check if these guys matter at all in this new setup; might be from old scripts
+    demo_batch_size = 40 # Check if these guys matter at all in this new setup; might be from old scripts
     # bc_loss = True # See def configure_mlp in config.py too
     network = 'mlp'
     network_kargs = {}
@@ -117,7 +117,7 @@ if __name__ == '__main__':
     # n_batches = 10 #2
     demo_file = '/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/data/demodata.npy'
     #train(model=model, rollout_worker=rollout_worker, n_epochs=n_epochs, n_batches=n_batches, demo_file=demo_file)
-    replay_start = 0 # 1000  # int, the sampling from the replay buffer does not start until replay buffer has at least that many samples
+    replay_start = 2 # 1000  # int, the sampling from the replay buffer does not start until replay buffer has at least that many samples
     replay_ratio = 4  # int, how many (on averages) batches of data fo sample from the replay buffer take after batch from the environment
     learn(model=model, runner=rollout_worker, nenvs=nenvs, nsteps=nsteps, replay_start=replay_start,
           replay_ratio=replay_ratio, total_timesteps=total_timesteps)
