@@ -85,6 +85,7 @@ void ModelT42::callbackContactPointObjectLeft(std_msgs::Int32MultiArray msg){
 //    cout << "callback contact point object left: " << msg << endl;
 //    cout << "gg: " << msg.data[0] << endl;
     contactPointLeft[0] = coord_t(msg.data[0], msg.data[1]);
+//    cout << "contactPointLeft[0]: " << contactPointLeft[0].first << endl;
 }
 
 void ModelT42::callbackContactPointObjectRight(std_msgs::Int32MultiArray msg){

@@ -1,6 +1,16 @@
 #! /usr/bin/python
 
 import rospy
+import sys
+import os
+import argparse
+import time
+import feature_creator as creator
+
+from marker_tracker.msg import ImageSpacePoseMsg
+from std_msgs.msg import Bool, Float64MultiArray, Int32MultiArray, UInt32
+
+import rospy
 import time
 from common_msgs_gl.srv import SendInt
 from std_srvs.srv import SetBool
@@ -12,6 +22,15 @@ import auto_data_collector.keyboard_encodings as ENC
 
 from random import *
 import numpy as np
+
+LEFT_DISTAL_NUM=0
+LEFT_PROXIMAL_NUM=1
+RIGHT_DISTAL_NUM=2
+RIGHT_PROXIMAL_NUM=3
+OBJECT_MARKER_NUM =4
+REF=5
+OPP_REF=6
+MARKER_NUM = 7
 
 initialize_hand_srv_ = rospy.ServiceProxy('/manipulation_manager/set_mode', SendInt)
 reset_obj_srv_ = rospy.ServiceProxy('/system_reset/reset_object', SendInt)
@@ -26,6 +45,8 @@ ALLOW_GRIPPER_TO_MOVE =1
 OPEN_GRIPPER =2
 
 seconds_until_next_reset = 3
+
+SAVE_DIR = "/home/grablab/grablab-ros/src/projects/sliding_policies/classification_data/original"
 
 class AutoDataCollectorNode():
     def __init__(self):
@@ -101,8 +122,12 @@ class AutoDataCollectorNode():
         reset_obj_srv_(LOWER_CRANE_OBJECT_READY)
         time.sleep(2)
 
+        logfile = None
+        self.prepare_data_collection_node(logfile)
+
         ### Send True from terminal to start RL training.
         enable_srv_ = rospy.Service("/auto_data_collector/enable_collection", SetBool, self.enable_data_save)
+
 
         r = rospy.Rate(30)  # 30hz
         while not rospy.is_shutdown():
@@ -135,6 +160,38 @@ class AutoDataCollectorNode():
                 if self.enable_fake_keyboard_:
                     self.fake_keyboard_call_()
             r.sleep()
+
+    def prepare_data_collection_node(self, logilfe):
+        logfile = os.path.join(SAVE_DIR, logfile)
+        print("logfile: {}".format(logfile))
+        history_length = 30
+        self.prev_aruco_locs = [[None, None] for _ in range(MARKER_NUM)]
+        self.grasp_history_length = history_length
+        self.creator = creator.FeatureCreator(self.grasp_history_length)
+        self.contact_point_left_finger = None
+        self.contact_point_right_finger = None
+        self.contact_point_object_left = None
+        self.contact_point_object_right = None
+        self.keyboard_input = None
+        self.logfile = open(logfile, "w")
+        self.logfile.write(','.join(['m0_posx', 'm0_posy', 'm2_posx', 'm2_posy', 'm4_posx', 'm4_posy',
+                                     'm0_angle', 'm2_angle', 'm4_angle',
+                                     'contact_point_obj_left_posx', 'contact_point_obj_left_posy',
+                                     'contact_point_obj_right_posx', 'contact_point_obj_right_posy',
+                                     'contact_point_left_finger_posx', 'contact_point_left_finger_posy',
+                                     'contact_point_right_finger_posx', 'contact_point_right_finger_posy',
+                                     'last_action_keyboard', 'reward']) + '\n')
+
+        rospy.Subscriber('/marker_tracker/image_space_pose_msg', ImageSpacePoseMsg, self.imagePoseCallback)
+        rospy.Subscriber('contact_point_detector/contact_point_left_finger', Int32MultiArray,
+                         self.ContactPointLeftFingerCallback)
+        rospy.Subscriber('contact_point_detector/contact_point_right_finger', Int32MultiArray,
+                         self.ContactPointRightFingerCallback)
+        rospy.Subscriber('contact_point_detector/contact_point_object_left', Int32MultiArray,
+                         self.ContactPointObjectLeftCallback)
+        rospy.Subscriber('contact_point_detector/contact_point_object_right', Int32MultiArray,
+                         self.ContactPointObjectRightCallback)
+        rospy.Subscriber('/keyboard_input', UInt32, self.keyboard_callback)
 
 
     def fake_keyboard_call_(self):
@@ -208,6 +265,22 @@ class AutoDataCollectorNode():
                 self.reset_to_save_motors = False
             '''
 
+    def record_data(self):
+        aruco_locs = self.creator.get_aruco_pos()
+        aruco_angles = self.creator.get_aruco_angle()
+        reward = 0
+        if self.prev_aruco_locs[OBJECT_MARKER_NUM] != aruco_locs[OBJECT_MARKER_NUM]:
+            info_list = aruco_locs[LEFT_DISTAL_NUM] + aruco_locs[RIGHT_DISTAL_NUM] + aruco_locs[OBJECT_MARKER_NUM] \
+             + [aruco_angles[LEFT_DISTAL_NUM], aruco_angles[RIGHT_DISTAL_NUM], aruco_angles[OBJECT_MARKER_NUM]] \
+             + list(self.contact_point_object_left) + list(self.contact_point_object_right) \
+             + list(self.contact_point_left_finger) + list(self.contact_point_right_finger) \
+             + [self.keyboard_input, reward]
+
+            self.logfile.write(','.join([str(x) for x in info_list]) + '\n')
+                 #list(l_pos + r_pos + o_pos) \
+                 #+ [l_ang, r_ang, o_ang, self.vel_ref_direction, self.keyboard_input, reward]]) + '\n')
+        self.prev_aruco_locs = aruco_locs
+
     def itemDroppedCallback(self, msg):
         self.is_dropped_ = msg.data
         #print('is_dropped: {}'.format(self.is_dropped))
@@ -260,6 +333,23 @@ class AutoDataCollectorNode():
         self.enable_fake_keyboard_ = True
         self.enable = True
         self.master_tic = time.time()
+
+    def imagePoseCallback(self, msg):
+        #print(msg)
+        self.creator.add_marker_pose(msg)
+
+    def ContactPointLeftFingerCallback(self, msg):
+        self.contact_point_left_finger = msg.data
+
+    def ContactPointRightFingerCallback(self, msg):
+        self.contact_point_right_finger = msg.data
+
+    def ContactPointObjectLeftCallback(self, msg):
+        self.contact_point_object_left = msg.data
+
+    def ContactPointObjectRightCallback(self, msg):
+        self.contact_point_object_right = msg.data
+
 
 if __name__ == "__main__":
 

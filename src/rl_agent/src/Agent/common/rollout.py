@@ -93,8 +93,8 @@ class RolloutWorker:
         rospy.Subscriber("/stuck_drop_detector/object_move_dist", Int32, self.objectMoveDist)
         rospy.Subscriber("/gripper/load", Float32MultiArray, self.gripperLoadCallback)
 
-        self.init_config_pub_ = rospy.Publisher("initial_config_state", ImageSpacePoseMsg, queue_size=1)
-        self.goal_config_pub_ = rospy.Publisher("goal_config_state", ImageSpacePoseMsg, queue_size=1)
+        self.init_config_pub_ = rospy.Publisher("rl_agent/initial_config_state", ImageSpacePoseMsg, queue_size=1)
+        self.goal_config_pub_ = rospy.Publisher("rl_agent/goal_config_state", ImageSpacePoseMsg, queue_size=1)
         self.ac_pub = rospy.Publisher('rl_agent/rl_action', RLAction, queue_size=1)
         self.fake_keyboard_pub_ = rospy.Publisher('/keyboard_input', UInt32, queue_size=1)
 
@@ -200,6 +200,7 @@ class RolloutWorker:
             #if self.first:
 
             self.current_state = self.prepare_s(sr.state)
+            print("self.current_state: {}".format(self.current_state))
             self.achieved_goal = self.current_state
             self.current_reward = sr.reward
             print("Current_reward: {}".format(self.current_reward))
@@ -228,7 +229,7 @@ class RolloutWorker:
         else:
             return
 
-    def sample_goal(self):
+    def sample_goal(self, init_config):
         # check dimensions of goal
         return 0
 
@@ -239,19 +240,23 @@ class RolloutWorker:
         print("Keyboard input Down!!!")
         self.fake_keyboard_pub_.publish(self.keyboardDict["KEYX"])
         '''
-
+        print("Initializing the hand/object configuration...")
         print("printing system state: {}".format(self.system_state))
         if self.time_taken >= self.time_to_live:
             self.time_to_live = randint(5, 25)  # between 1.5-2.5 seconds
-            self.current_selection = randint(1, len(self.selection_choices) - 1)
+            while True:
+                self.current_selection = randint(1, len(self.selection_choices) - 1)
+                if self.selection_choices[self.current_selection] not in {'KEYX', 'KEYXX', 'KEYXXX', 'KEY_S_', 'KEY_W'}:
+                    break
             self.time_taken = 0
             new_value = True
 
-        if self.selection_choices[self.current_selection] in {'KEYX', 'KEYXX', 'KEYXXX', 'KEY_S_'}:
+        if self.selection_choices[self.current_selection] in {'KEYX', 'KEYXX', 'KEYXXX', 'KEY_S_', 'KEY_W'}:
             pass
         else:
             self.fake_keyboard_pub_.publish(self.keyboardDict[self.selection_choices[self.current_selection]])
             print("Keyboard input: {}".format(self.selection_choices[self.current_selection]))
+            self.count_random_action_sent += 1
 
         if self.is_dropped_ or self.is_stuck_ or self.reset_to_save_motors == True:
             self.resetObject()
@@ -287,19 +292,21 @@ class RolloutWorker:
 
         episode = dict(o=None, u=None, r=None, done=None, mu=None, ag=None, drop=None, g=None, stuck=None)
         Qs = []
-        count_random_action_sent = 0
+        self.count_random_action_sent = 0
         while not rospy.is_shutdown():
             # Instead of doing this, I want to get the system_state from ModelT42
             reset_flag = rospy.get_param('/RLAgent/reset')
             #self.initObjectPosition()
             # Let the hand move
             print("reset_flag: {}".format(reset_flag))
-            print("system_state: {}, self.enable: {}, self.initialized: {}".format(self.system_state, self.enable, self.initialized))
-            if count_random_action_sent < 10 and self.system_state==2:
+            print("system_state: {}, self.enable: {}, self.initialized: {}, self.count_random_action_sent: {}".format(self.system_state, self.enable, self.initialized, self.count_random_action_sent))
+            if self.count_random_action_sent < 10 and self.system_state==2:
                 # self.initObjectPosition()
+                if self.count_random_action_sent == 1:
+                    self.g = self.current_config
                 self.init_object_position()
-                count_random_action_sent += 1
-                if count_random_action_sent == 10:
+                if self.count_random_action_sent == 10:
+                    print("Initialization Done")
                     self.fake_keyboard_pub_.publish(self.keyboardDict["KEY_S_"])
                     # initial_config = PointArray()
                     # initial_config.x = []
@@ -307,7 +314,9 @@ class RolloutWorker:
                     self.init_config_pub_.publish(self.current_config)
                     # TODO: How should I generate goals?
                     # TODO: self.goal should be filled here.
-                    self.g = self.sample_goal() #TODO: Need to check the dimension of goal
+                    #self.g = self.sample_goal(self.current_config) #TODO: Need to check the dimension of goal
+                    self.goal_config_pub_.publish(self.g)
+                    self.initialized = True
             # if reset_flag:
             if self.enable and self.initialized:
                 print("self.current_action: {}".format(self.current_action))
@@ -325,13 +334,14 @@ class RolloutWorker:
                     # acts.append(np.expand_dims(one_hot_action, 0))
                     acts.append(np.expand_dims([self.dims['u']], 0))
                     mus.append(self.mus)
-                    rewards.append(np.expand_dims(np.array([self.current_reward]), 0))
+                    # rewards.append(np.expand_dims(np.array([self.current_reward]), 0))
                     dones.append(np.expand_dims(np.array([self.current_done]), 0))
 
                     if self.is_dropped_ or self.is_stuck_ or self.reset_to_save_motors == True:
                         # resp = record_hand_srv_(DROP_CASE)
                         drops.append(np.expand_dims(np.array([int(self.is_dropped_)]), 0))
                         stucks.append(np.expand_dims(np.array([int(self.is_stuck_ or self.reset_to_save_motors)]), 0))
+                        rewards.append(np.expand_dims(np.array([self.current_reward-20]), 0))
                         if self.is_dropped_:
                             print("Dropped Object")
                             rospy.loginfo("Dropped Object")
@@ -355,6 +365,7 @@ class RolloutWorker:
                     else:
                         drops.append(np.expand_dims(np.array([int(self.is_dropped_)]), 0))
                         stucks.append(np.expand_dims(np.array([int(self.is_stuck_ or self.reset_to_save_motors)]), 0))
+                        rewards.append(np.expand_dims(np.array([self.current_reward]), 0))
 
                     if len(acts) == self.model.nbatch + 1:
                         self.resetObject()
@@ -458,6 +469,7 @@ class RolloutWorker:
         initialize_hand_srv_(OPEN_GRIPPER) # let the system stop
         time.sleep(8)
 
+        counter = 0
         while time_to_break == False:
             resp =  reset_obj_srv_(RAISE_CRANE_RESET)
             time.sleep(5)
@@ -470,6 +482,9 @@ class RolloutWorker:
                     break
             if self.object_move_dist_ <=15:
                 time_to_break=True
+            counter += 1
+            if counter == 3:
+                break
 
         #Now we can close the fingers and wait for the grasp
         print("Getting gripper ready")
@@ -485,4 +500,6 @@ class RolloutWorker:
         self.enable = True
         self.is_dropped_= False
         self.is_stuck_ = False
+        self.count_random_action_sent = 0
+        self.initialized = False
         self.master_tic = time.time()

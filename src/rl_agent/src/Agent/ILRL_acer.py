@@ -70,6 +70,25 @@ def learn(model, runner, nenvs, nsteps, replay_start, replay_ratio, total_timest
 
     return model
 
+def save_episode(episode, i):
+    obs = episode['o']
+    print(obs)
+    SAVE_DIR = "/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/data_init_goal/original"
+    file_path = os.path.join(SAVE_DIR, 'episode_'+str(i)+'.out')
+    obs_reshaped = np.squeeze(obs)
+    np.savetxt(file_path, obs_reshaped, delimiter=',')
+
+def collect_rl_data(runner):
+    i = 1
+    while True:
+        print("Episode: {}".format(i))
+        episode = runner.generate_rollouts()
+        if episode['drop'][0][0][0] == 1 or episode['stuck'][0][0][0] == 1:
+            print("Drop happened at time step 1. Ignoring this episode...")
+            continue
+        save_episode(episode, i)
+        i += 1
+
 if __name__ == '__main__':
     rospy.init_node(NODE)
     rospy.loginfo('started RLAgent node')
@@ -79,7 +98,7 @@ if __name__ == '__main__':
     n_epochs = 100000
     random_eps = 0.1
     bc_loss = True #False
-    nsteps = 6 # batch_size in mlp.py I guess? -> number of rollout steps
+    nsteps = 40 # 6 # batch_size in mlp.py I guess? -> number of rollout steps
     batch_size = 40      # Check if these guys matter at all in this new setup; might be from old scripts
     demo_batch_size = 40 # Check if these guys matter at all in this new setup; might be from old scripts
     # bc_loss = True # See def configure_mlp in config.py too
@@ -108,7 +127,7 @@ if __name__ == '__main__':
 #                  bc_loss=bc_loss,
 #                  batch_size=40, demo_batch_size=20,
 #                  model_name=model_name, save_path=MODEL_SAVE_PATH, checkpoint_path=checkpoint_path, restore=True)
-    print('ggggggggg')
+    print('ggggggggggg')
     print(model)
     print('gggggggggggg')
 
@@ -119,5 +138,8 @@ if __name__ == '__main__':
     #train(model=model, rollout_worker=rollout_worker, n_epochs=n_epochs, n_batches=n_batches, demo_file=demo_file)
     replay_start = 2 # 1000  # int, the sampling from the replay buffer does not start until replay buffer has at least that many samples
     replay_ratio = 4  # int, how many (on averages) batches of data fo sample from the replay buffer take after batch from the environment
-    learn(model=model, runner=rollout_worker, nenvs=nenvs, nsteps=nsteps, replay_start=replay_start,
-          replay_ratio=replay_ratio, total_timesteps=total_timesteps)
+
+    collect_rl_data(runner=rollout_worker)
+
+    #learn(model=model, runner=rollout_worker, nenvs=nenvs, nsteps=nsteps, replay_start=replay_start,
+    #      replay_ratio=replay_ratio, total_timesteps=total_timesteps)

@@ -62,8 +62,8 @@ class Model(object):
         # this is going to be X in build_policy
         #step_ob_placeholder = tf.placeholder(dtype=ob_space.dtype, shape=(nenvs,) + ob_space.shape[:-1] + (ob_space.shape[-1] * nstack,))
         #train_ob_placeholder = tf.placeholder(dtype=ob_space.dtype, shape=(nenvs*(nsteps+1),) + ob_space.shape[:-1] + (ob_space.shape[-1] * nstack,))
-        step_ob_placeholder = tf.placeholder(dtype=tf.int32, shape=(nenvs,13))
-        train_ob_placeholder = tf.placeholder(dtype=tf.int32, shape=(nenvs*(nsteps+1), 13))
+        step_ob_placeholder = tf.placeholder(dtype=tf.int32, shape=(nenvs, 13)) # change this to shape=(nenvs,13 + 13)
+        train_ob_placeholder = tf.placeholder(dtype=tf.int32, shape=(nenvs*(nsteps+1), 13))  # change this to shape=(nenvs*(nsteps+1), 13 + 13)
         with tf.variable_scope('acer_model', reuse=tf.AUTO_REUSE):
             # step_model = policy(num_states=num_states, num_actions=num_actions, sess=self.sess)
             # step_model = policy(num_states=num_states, num_actions=num_actions, sess=self.sess)
