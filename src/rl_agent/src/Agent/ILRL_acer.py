@@ -98,10 +98,13 @@ if __name__ == '__main__':
     n_epochs = 100000
     random_eps = 0.1
     bc_loss = True #False
-    nsteps = 40 # 6 # batch_size in mlp.py I guess? -> number of rollout steps
+    nenvs = 2 # the batch size in training. Something we can treat in parallel.
+    nsteps = 40 # This should just be the number of steps in a sampled trajectories. Should be dealt in def call() in Acer()
     batch_size = 40      # Check if these guys matter at all in this new setup; might be from old scripts
+    # This acutually matters for ReplayBuffer. This should be the number of steps in a sampled trajectory
     demo_batch_size = 40 # Check if these guys matter at all in this new setup; might be from old scripts
     # bc_loss = True # See def configure_mlp in config.py too
+    num_rollouts = 50 # This is a new variable. Should only be used in rollout.py and ReplayBuffer. Remember that the T as in the episode batch shape is this num_rollouts.
     network = 'mlp'
     network_kargs = {}
     policy = build_policy(network, estimate_q=True, **network_kargs)
@@ -114,12 +117,12 @@ if __name__ == '__main__':
                  c, trust_region, alpha, delta): 
     '''
 
-    nenvs = 1; ent_coef =0.01 ; q_coef=0.5 ; gamma=0.99 ; max_grad_norm=10 ;
+    ent_coef =0.01 ; q_coef=0.5 ; gamma=0.99 ; max_grad_norm=10 ;
     rprop_alpha=0.99 ; rprop_epsilon=1e-5 ; total_timesteps=int(10e5) ;
     trust_region=False; alpha=0.99 ; delta =1 ; # what are alpha and delta again?
     lrschedule='linear' ; c =10.0 ; lr =7e-4
     buffer_size=10000; bc_loss=False
-    model = Model(policy, num_states=dims['o'], num_actions=dims['u'], nenvs=nenvs, nsteps=nsteps,
+    model = Model(policy, num_states=dims['o'], num_actions=dims['u'], nenvs=nenvs, nsteps=nsteps, num_rollouts=num_rollouts,
                   ent_coef=ent_coef, q_coef=q_coef, gamma=gamma, max_grad_norm=max_grad_norm, lr=lr,
                   rprop_alpha=rprop_alpha, rprop_epsilon=rprop_epsilon, total_timesteps=total_timesteps,
                   lrschedule=lrschedule, c=c, trust_region=trust_region, alpha=alpha, delta=delta,
@@ -127,11 +130,11 @@ if __name__ == '__main__':
 #                  bc_loss=bc_loss,
 #                  batch_size=40, demo_batch_size=20,
 #                  model_name=model_name, save_path=MODEL_SAVE_PATH, checkpoint_path=checkpoint_path, restore=True)
-    print('ggggggggggg')
+    print('gggggggggggg')
     print(model)
     print('gggggggggggg')
 
-    rollout_worker = RolloutWorker(model, dims, use_target_net=True, compute_Q=True, random_eps=random_eps)
+    rollout_worker = RolloutWorker(model, dims, num_rollouts, use_target_net=True, compute_Q=True, random_eps=random_eps)
 
     # n_batches = 10 #2
     demo_file = '/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/data/demodata.npy'
@@ -139,7 +142,7 @@ if __name__ == '__main__':
     replay_start = 2 # 1000  # int, the sampling from the replay buffer does not start until replay buffer has at least that many samples
     replay_ratio = 4  # int, how many (on averages) batches of data fo sample from the replay buffer take after batch from the environment
 
-    collect_rl_data(runner=rollout_worker)
+    #collect_rl_data(runner=rollout_worker)
 
-    #learn(model=model, runner=rollout_worker, nenvs=nenvs, nsteps=nsteps, replay_start=replay_start,
-    #      replay_ratio=replay_ratio, total_timesteps=total_timesteps)
+    learn(model=model, runner=rollout_worker, nenvs=nenvs, nsteps=nsteps, replay_start=replay_start,
+         replay_ratio=replay_ratio, total_timesteps=total_timesteps)

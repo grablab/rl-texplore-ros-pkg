@@ -40,7 +40,7 @@ def q_retrace(R, D, q_i, v, rho_i, nenvs, nsteps, gamma):
     return qret
 
 class Model(object):
-    def __init__(self, policy, num_states, num_actions, nenvs, nsteps,
+    def __init__(self, policy, num_states, num_actions, nenvs, nsteps, num_rollouts,
                  ent_coef, q_coef, gamma, max_grad_norm, lr,
                  rprop_alpha, rprop_epsilon, total_timesteps, lrschedule,
                  c, trust_region, alpha, delta,
@@ -49,6 +49,7 @@ class Model(object):
         self.sess = sess = tf.get_default_session()
         if self.sess is None:
             self.sess = tf.InteractiveSession() # what is this for?
+        self.nenvs = nenvs; self.nsteps = nsteps; self.num_rollouts = num_rollouts
         self.nbatch = nbatch = nenvs*nsteps
         #nact = num_actions
 
@@ -62,7 +63,7 @@ class Model(object):
         # this is going to be X in build_policy
         #step_ob_placeholder = tf.placeholder(dtype=ob_space.dtype, shape=(nenvs,) + ob_space.shape[:-1] + (ob_space.shape[-1] * nstack,))
         #train_ob_placeholder = tf.placeholder(dtype=ob_space.dtype, shape=(nenvs*(nsteps+1),) + ob_space.shape[:-1] + (ob_space.shape[-1] * nstack,))
-        step_ob_placeholder = tf.placeholder(dtype=tf.int32, shape=(nenvs, 13)) # change this to shape=(nenvs,13 + 13)
+        step_ob_placeholder = tf.placeholder(dtype=tf.int32, shape=(1, 13)) # change this to shape=(nenvs,13 + 13)
         train_ob_placeholder = tf.placeholder(dtype=tf.int32, shape=(nenvs*(nsteps+1), 13))  # change this to shape=(nenvs*(nsteps+1), 13 + 13)
         with tf.variable_scope('acer_model', reuse=tf.AUTO_REUSE):
             # step_model = policy(num_states=num_states, num_actions=num_actions, sess=self.sess)
@@ -96,7 +97,7 @@ class Model(object):
         train_model_p = tf.nn.softmax(train_model.pi)
         polyak_model_p = tf.nn.softmax(polyak_model.pi)
         step_model_p = tf.nn.softmax(step_model.pi)
-        v = tf.reduce_sum(train_model_p * train_model.q, axis = -1) # shape is [nenvs * (nsteps + 1)]
+        v = tf.reduce_sum(train_model_p * train_model.q, axis=-1) # shape is [nenvs * (nsteps + 1)]
 
         print("train_model_p shape: {}".format(train_model_p.get_shape().as_list()))
         print("v shape: {}".format(v.get_shape().as_list()))
@@ -105,6 +106,7 @@ class Model(object):
 
         # strip off last step # I'm assuming that the reason you need nsteps+1 for train_model is to get obs_{t+1} info
         # for Experience Replay (each tuple in the buffer should be (o_t, o_{t+1}, r_t, a_t)
+        # The above interpretation (each tuple..) is false for our setting since it's trajecotry based; should be updated when I have time.
         f, f_pol, q = map(lambda var: strip(var, nenvs, nsteps), [train_model_p, polyak_model_p, train_model.q])
 
         print("f shape: {}".format(f.get_shape().as_list()))
@@ -136,7 +138,6 @@ class Model(object):
         gain_f = logf * tf.stop_gradient(adv * tf.minimum(c, rho_i))  # [nenvs * nsteps]
         loss_f = -tf.reduce_mean(gain_f)
 
-
         # Bias correction for the truncation
         adv_bc = (q - tf.reshape(v, [nenvs * nsteps, 1]))  # [nenvs * nsteps, nact]
         logf_bc = tf.log(f + eps) # / (f_old + eps)
@@ -156,7 +157,7 @@ class Model(object):
         loss = loss_policy + q_coef * loss_q - ent_coef * entropy
 
         if trust_region:
-            #TODO: Implement trust_region method
+            #TODO: Implement trust_region method if I want to use it
             grads = tf.gradients(loss, params)
         else:
             grads = tf.gradients(loss, params)
@@ -178,19 +179,21 @@ class Model(object):
         names_ops = ['loss', 'loss_q', 'entropy', 'loss_policy', 'loss_f', 'loss_bc', 'explained_variance', 'norm_grads']
 
         if trust_region:
+            # TODO: Implement trust_region method if I want to use it
             run_ops = run_ops + []
             names_ops = names_ops + []
 
         def train(obs, actions, rewards, dones, mus, steps):
             cur_lr = lr.value_steps(steps)
             td_map = {train_model.X: obs, polyak_model.X: obs, A: actions, R: rewards, D: dones, MU: mus, LR: cur_lr}
-            print('sess dayo-----: {}'.format(self.sess))
-            return names_ops, self.sess.run(run_ops, td_map)[1:] # strip off _train
+            #print('sess dayo-----: {}'.format(self.sess))
+            return names_ops, self.sess.run(run_ops, td_map)[1:]  # strip off _train
 
         def _step(observation, goal, **kwargs):
             return step_model._evaluate([step_model.action, step_model_p], observation, **kwargs)
 
         def get_actions(o, g, noise_eps=0., random_eps=0., use_target_net=False, compute_Q=False):
+            # TODO: I don't think this function is used anymore?
             actions, mus = self._step(o, g)
             # states should be dummy states like []
             #TODO Check the dimension of act
@@ -205,7 +208,7 @@ class Model(object):
         self._step = _step
         self.step = self.step_model.step
 
-        def reward_fun(ag_2, g):
+        def reward_fun(ag, g):
             '''
             :param ag_2: shape [nsteps, ag_2_dim]
             :param g: shape [nsteps, g_dim]
@@ -214,14 +217,14 @@ class Model(object):
             def goal_distance(goal_a, goal_b):
                 assert goal_a.shape == goal_b.shape
                 return np.linalg.norm(goal_a - goal_b, axis=-1)
-            print('ag_2.shape: {}, g.shape: {}'.format(ag_2.shape, g.shape))
-            d = goal_distance(ag_2, g)
+            print('ag_2.shape: {}, g.shape: {}'.format(ag.shape, g.shape))
+            d = goal_distance(ag, g)
             print('goal_distance: {}'.format(d))
             distance_threshold = 0.5
             return - (d > distance_threshold).astype(np.float32)
 
         self.sample_transitions = make_sample_her_transitions(replay_strategy='future', replay_k=4, reward_fun=reward_fun)
-        self.buffer = ReplayBuffer(buffer_size, nsteps, self.sample_transitions)
+        self.buffer = ReplayBuffer(buffer_size, num_rollouts, self.sample_transitions)
 
         self.initial_state = step_model.initial_state
         tf.global_variables_initializer().run(session=sess)
@@ -229,7 +232,7 @@ class Model(object):
     def store_episode(self, episode_batch):
         self.buffer.store_episode(episode_batch)
 
-    def sample_batch(self, batch_size):
+    def sample_batch(self, batch_size, nsteps):
         '''
         if self.bc_loss:
             transitions = self.buffer.sample(self.batch_size - self.demo_batch_size)
@@ -243,7 +246,7 @@ class Model(object):
             pass
         else:
         '''
-        transitions = self.buffer.sample(batch_size)
+        transitions = self.buffer.sample(batch_size, nsteps)
         return transitions
 
 class Acer():
@@ -256,23 +259,69 @@ class Acer():
         #self.episode_stats = EpisodeStats(runner.nsteps, runner.nenv)
         self.steps = None
 
+    def sample_trajectory_on_policy(self, episode_batch, nsteps):
+        nsteps += 1
+        # Shape: i.e. want to convert (50,13) into shape (41,13)
+        # TODO: Need to think about this carefuly. It's related to HER sampling too.
+        # where is the drop time step?
+        if np.all(np.squeeze(episode_batch['drop'])==0) and np.all(np.squeeze(episode_batch['stuck'])==0): # checking if every element is zero
+            print("Neither drop nor stuck didn't happen")
+            drop_time_id = self.num_rollouts # getting the index for HER drop_time_steps
+        else:
+            if not np.all(np.squeeze(episode_batch['drop'])==0):
+                print("drop happened")
+                drop_time_id = np.where(np.squeeze(episode_batch['drop'])==1)[0][0]
+            if not np.all(np.squeeze(episode_batch['stuck'])==0):
+                print("stuck happened")
+                drop_time_id = np.where(np.squeeze(episode_batch['stuck'])==1)[0][0]
+        print("On-Policy drop_time_id: {}".format(drop_time_id))
+        print("nsteps: {}".format(nsteps))
+        if drop_time_id <= nsteps:
+            t_sample = nsteps
+        else:
+            t_sample = np.random.randint(low=nsteps, high=drop_time_id)
+        print("t_samples: {}".format(t_sample))
+        print("episode_batch['o'].shape: {}".format(episode_batch['o'].shape))
+        temp_o = episode_batch['o'][:,(t_sample-nsteps):t_sample,:]
+        temp_u = episode_batch['u'][:,(t_sample-nsteps):t_sample,:]
+        temp_r = episode_batch['r'][:,(t_sample-nsteps):t_sample,:]
+        temp_mu = episode_batch['mu'][:,(t_sample-nsteps):t_sample,:]
+        temp_done = episode_batch['done'][:,(t_sample-nsteps):t_sample,:]
+
+        print("temp_o.shape: {}".format(temp_o.shape))
+        return temp_o, temp_u, temp_r, temp_mu, temp_done
+
+
     def call(self, on_policy):
         runner, model, buffer, steps = self.runner, self.model, self.buffer, self.steps
+        n_state_space = 13
         if on_policy:
-            episode = runner.generate_rollouts() #run()
-            print("printing episode['drop'][0][0]: {}".format(episode['drop'][0][0]))
-            print("printing episode['stuck'][0][0]: {}".format(episode['stuck'][0][0]))
-            if episode['drop'][0][0][0] == 1 or episode['stuck'][0][0][0] == 1:
-                print("Drop happened at time step 1. Ignoring this episode...")
-                return
-            model.store_episode(episode)
-            # obs, actions, rewards, mus, dones, masks = episode
-            obs, actions, rewards, mus, dones = episode['o'], episode['u'], episode['r'], episode['mu'], episode['done']
-            #if buffer is not None:
-            #    buffer.put(obs, actions, rewards, mus, dones, masks)
+            i = 0
+            obs = np.empty((model.nenvs, model.nsteps+1, n_state_space)) # Need to reshape right before model.train
+            actions = np.empty((model.nenvs, model.nsteps+1, 1))
+            rewards = np.empty((model.nenvs, model.nsteps + 1, 1))
+            mus = np.empty((model.nenvs, model.nsteps + 1, 9))
+            dones = np.empty((model.nenvs, model.nsteps + 1, 1))
+            while i < model.nenvs:
+                print("ON_POLICY {}/{} th ROLLOUT STARTING..........".format(i + 1, model.nenvs))
+                episode = runner.generate_rollouts() #run()
+                print("printing episode['drop'][0][0]: {}".format(episode['drop'][0][0]))
+                print("printing episode['stuck'][0][0]: {}".format(episode['stuck'][0][0]))
+                if episode['drop'][0][0][0] == 1 or episode['stuck'][0][0][0] == 1:
+                    print("Drop happened at time step 1. Ignoring this episode...")
+                    return
+                model.store_episode(episode) #TODO: Fix the length of batch shape in replay_buffer_her.py
+                # obs, actions, rewards, mus, dones, masks = episode
+                # I have to make sure that I "sample" the trajectory of length nsteps from the episode, whose length is num_rollouts.
+                # TODO : The following line will throw an error for inconsistent shape
+                obs[i], actions[i], rewards[i], mus[i], dones[i] = self.sample_trajectory_on_policy(episode, model.nsteps)
+                # obs[i], actions[i], rewards[i], mus[i], dones[i] = episode['o'], episode['u'], episode['r'], episode['mu'], episode['done']
+                i += 1
         else:
-            transitions = model.sample_batch(model.nbatch)
-            obs, obs_2, rewards, actions, mus, dones = transitions['o'], transitions['o_2'], transitions['r'], transitions['u'], transitions['mu'], transitions['done']
+            transitions = model.sample_batch(model.nenvs, model.nsteps)
+            # I shouldn't have any o_2 thing here. It's some old stuff from HER+DDPG
+            # obs, obs_2, rewards, actions, mus, dones = transitions['o'], transitions['o_2'], transitions['r'], transitions['u'], transitions['mu'], transitions['done']
+            obs, rewards, actions, mus, dones = transitions['o'], transitions['r'], transitions['u'], transitions['mu'], transitions['done']
             #obs, actions, rewards, mus, dones, masks = buffer.get()
 
         # reshape correctly
@@ -281,12 +330,13 @@ class Acer():
         print("rewards.shape: {}".format(rewards.shape))
         print("dones.shape: {}".format(dones.shape))
         if on_policy:
-            obs = np.squeeze(obs)
-            actions = np.squeeze(actions)[:-1]
-            rewards = np.squeeze(rewards)[:-1]
-            mus = np.squeeze(mus)[:-1]
-            dones = np.squeeze(dones)[1:]
+            obs = obs.reshape(model.nenvs*(model.nsteps+1), n_state_space)
+            actions = np.squeeze(actions[:, :-1, :].reshape(model.nenvs*model.nsteps, -1))
+            rewards = np.squeeze(rewards[:, 1:, :].reshape(model.nenvs*model.nsteps, -1))
+            mus = mus[:, 1:, :].reshape(model.nenvs*model.nsteps, -1)
+            dones = np.squeeze(dones[:, 1:, :].reshape(model.nenvs*model.nsteps, -1))
         else:
+            '''
             # Make obs for train from obs and obs_2
             temp_obs = np.expand_dims(np.squeeze(obs_2)[-1], 0)
             print("obs shape: {}, {}, {}".format(np.squeeze(obs).shape, np.squeeze(obs_2)[-1].shape, temp_obs.shape))
@@ -295,6 +345,12 @@ class Acer():
             rewards = np.squeeze(rewards)
             mus = np.squeeze(mus)
             dones = np.squeeze(dones)
+            '''
+            obs = obs.reshape(model.nenvs*(model.nsteps+1), n_state_space)
+            actions = np.squeeze(actions[:, :-1, :].reshape(model.nenvs*model.nsteps, -1))
+            rewards = np.squeeze(rewards[:, 1:, :].reshape(model.nenvs*model.nsteps, -1))
+            mus = mus[:, 1:, :].reshape(model.nenvs*model.nsteps, -1)
+            dones = np.squeeze(dones[:, 1:, :].reshape(model.nenvs*model.nsteps, -1))
 
         print("obs.shape: {}".format(obs.shape))
         print("actions.shape: {}".format(actions.shape))

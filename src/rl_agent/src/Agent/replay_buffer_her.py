@@ -2,7 +2,7 @@ import random
 import numpy as np
 
 class ReplayBuffer:
-    def __init__(self, size, nsteps, sample_transitions):
+    def __init__(self, size, num_rollouts, sample_transitions):
         """Creates a replay buffer.
         Args:
             buffer_shapes (dict of ints): the shape for all buffers that are used in the replay
@@ -13,11 +13,12 @@ class ReplayBuffer:
         """
         self._storage = []
         # self.buffers = dict(o=[], u=[], r=[], d=[], mu=[])
-        self.nsteps = nsteps + 1
+        self.num_rollouts = num_rollouts  # nsteps + 1
+        # -> This self.nsteps should be num_rollouts. self.nsteps is the number of steps in a sampled trajectory, which should be determined by a model definition in acer.py
         self.size = int(10E6)
         self.buffer_shapes = {'o': 13, 'u': 1, 'r': 1, 'done': 1, 'mu': 9, 'ag': 13,
                               'drop': 1, 'g':13}
-        self.buffers = {key: np.empty([self.size, self.nsteps, shape])
+        self.buffers = {key: np.empty([self.size, self.num_rollouts, shape])
                         for key, shape in self.buffer_shapes.items()}
         self.buffers['drop_time_steps'] = np.empty([self.size, 1])
         # [num_of_episodes, nsteps, 13] if 'o'
@@ -30,7 +31,7 @@ class ReplayBuffer:
     def has_atleast(self, size):
         return self.current_size >= size
 
-    def sample(self, batch_size):
+    def sample(self, batch_size, nsteps):
         """Returns a dict {key: array(batch_size x shapes[key])}
         """
         buffers = {}
@@ -41,17 +42,17 @@ class ReplayBuffer:
             # So this is taking all the data in the buffer
 
 
-        buffers['o_2'] = buffers['o'][:, 1:, :] # [num_of_episodes, nsteps, 13] if 'o'
-        buffers['ag_2'] = buffers['ag'][:, 1:, :]
+        #buffers['o_2'] = buffers['o'][:, 1:, :] # [num_of_episodes, nsteps, 13] if 'o'
+        #buffers['ag_2'] = buffers['ag'][:, 1:, :]
 
         drop_time_steps = None  # Have to think how to incorporate this
-        transitions = self.sample_transitions(buffers, batch_size) # this batch_size = nbatch = nevns*nsteps
+        transitions = self.sample_transitions(buffers, batch_size, nsteps) # this batch_size = nenvs. nsteps = number of steps in a trajectory
         # print("transitions: {}".format(transitions))
 
         print("transitions.keys() : {}".format(transitions.keys()))
-        new_transitions = list(set(['r', 'o_2', 'ag_2'] + list(self.buffers.keys())) - set('drop_time_steps'))
+        #new_transitions = list(set(['r', 'o_2', 'ag_2'] + list(self.buffers.keys())) - set('drop_time_steps'))
         print("self.buffers.keys():{}".format(self.buffers.keys()))
-        print("new transitions.keys() : {}".format(new_transitions))
+        #print("new transitions.keys() : {}".format(new_transitions))
         '''
         for key in (set(['r', 'o_2', 'ag_2'] + list(self.buffers.keys())) - set('drop_time_steps')):
             print("what is going on")
@@ -82,7 +83,7 @@ class ReplayBuffer:
         # TODO intergrate this drop thing with stuck
         if np.all(np.squeeze(episode_batch['drop'])==0) and np.all(np.squeeze(episode_batch['stuck'])==0): # checking if every element is zero
             print("Neither drop nor stuck didn't happen")
-            self.buffers['drop_time_steps'][idxs] = self.nsteps - 1 # getting the index for HER drop_time_steps
+            self.buffers['drop_time_steps'][idxs] = self.num_rollouts # getting the index for HER drop_time_steps
         else:
             if not np.all(np.squeeze(episode_batch['drop'])==0):
                 print("drop happened")

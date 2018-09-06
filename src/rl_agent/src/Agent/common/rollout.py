@@ -37,7 +37,7 @@ seconds_until_next_reset = 8
 
 
 class RolloutWorker:
-    def __init__(self, model, dims, rollout_batch_size=1,
+    def __init__(self, model, dims, num_rollouts, rollout_batch_size=1,
                  exploit=False, use_target_net=False, compute_Q=False, noise_eps=0.0,
                  random_eps=0.0, marker_space_markers=[0,1,2,3,4,5,6,7]):
         """
@@ -45,6 +45,7 @@ class RolloutWorker:
         :param dims (dict of ints): the dimensions for observations (o) and actions (u)
         :param rollout_batch_size (int): the number of parallel rollouts that should be used
         """
+        self.num_rollouts = num_rollouts
         self.model = model; self.dims = dims; self.rollout_batch_size=rollout_batch_size;
         self.exploit = exploit; self.use_target_net = use_target_net; self.compute_Q = compute_Q
         self.noise_eps = noise_eps; self.random_eps = random_eps
@@ -246,12 +247,12 @@ class RolloutWorker:
             self.time_to_live = randint(5, 25)  # between 1.5-2.5 seconds
             while True:
                 self.current_selection = randint(1, len(self.selection_choices) - 1)
-                if self.selection_choices[self.current_selection] not in {'KEYX', 'KEYXX', 'KEYXXX', 'KEY_S_', 'KEY_W'}:
+                if self.selection_choices[self.current_selection] not in {'KEYX', 'KEYXX', 'KEYXXX', 'KEY_S_', 'KEYW', 'KEYE', 'KEYQ'}:
                     break
             self.time_taken = 0
             new_value = True
 
-        if self.selection_choices[self.current_selection] in {'KEYX', 'KEYXX', 'KEYXXX', 'KEY_S_', 'KEY_W'}:
+        if self.selection_choices[self.current_selection] in {'KEYX', 'KEYXX', 'KEYXXX', 'KEY_S_', 'KEYW', 'KEYE', 'KEYQ'}:
             pass
         else:
             self.fake_keyboard_pub_.publish(self.keyboardDict[self.selection_choices[self.current_selection]])
@@ -300,12 +301,12 @@ class RolloutWorker:
             # Let the hand move
             print("reset_flag: {}".format(reset_flag))
             print("system_state: {}, self.enable: {}, self.initialized: {}, self.count_random_action_sent: {}".format(self.system_state, self.enable, self.initialized, self.count_random_action_sent))
-            if self.count_random_action_sent < 10 and self.system_state==2:
+            if self.count_random_action_sent < 5 and self.system_state==2:
                 # self.initObjectPosition()
                 if self.count_random_action_sent == 1:
                     self.g = self.current_config
                 self.init_object_position()
-                if self.count_random_action_sent == 10:
+                if self.count_random_action_sent == 5:
                     print("Initialization Done")
                     self.fake_keyboard_pub_.publish(self.keyboardDict["KEY_S_"])
                     # initial_config = PointArray()
@@ -367,7 +368,7 @@ class RolloutWorker:
                         stucks.append(np.expand_dims(np.array([int(self.is_stuck_ or self.reset_to_save_motors)]), 0))
                         rewards.append(np.expand_dims(np.array([self.current_reward]), 0))
 
-                    if len(acts) == self.model.nbatch + 1:
+                    if len(acts) == self.num_rollouts:
                         self.resetObject()
                         print("Returning an episode....")
                         # TODO: I should fill out the np array thing if the length of the array is not full.
@@ -407,9 +408,11 @@ class RolloutWorker:
         #rospy.spin()
 
     def is_episode_shape_ok(self, episode):
-        #TODO: finish this funciton
+        # Checking if the number of rollouts is enough for a valid episode
+        # i.e. if drop/stuck happens, the rollout ends there so we have to fill up the episode with zeros
+        # to make sure every episode has the same length
         print("len(episode['o']).shape: {}".format(len(episode['o'])))
-        if len(episode['o']) == self.model.nbatch+1:
+        if len(episode['o']) == self.num_rollouts: #self.model.nbatch+1:
             return True
         else:
             return False
@@ -417,7 +420,7 @@ class RolloutWorker:
     def fill_episode_with_zeros(self, episode):
         #TODO: Finish this function
         for key, val in episode.items():
-            while len(episode[key]) <= self.model.nbatch:
+            while len(episode[key]) < self.num_rollouts: #self.model.nbatch + 1 -> self.model.nbatch
                 temp_shape = episode[key][0].shape
                 print("temp_shape: {}".format(temp_shape))
                 episode[key].append(np.zeros(temp_shape))
