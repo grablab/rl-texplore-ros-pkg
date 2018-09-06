@@ -45,6 +45,7 @@ class RolloutWorker:
         :param dims (dict of ints): the dimensions for observations (o) and actions (u)
         :param rollout_batch_size (int): the number of parallel rollouts that should be used
         """
+        self.first = True
         self.num_rollouts = num_rollouts
         self.model = model; self.dims = dims; self.rollout_batch_size=rollout_batch_size;
         self.exploit = exploit; self.use_target_net = use_target_net; self.compute_Q = compute_Q
@@ -198,13 +199,15 @@ class RolloutWorker:
             if sr.terminal:
                 self.terminated = True
                 return
-            #if self.first:
 
             self.current_state = self.prepare_s(sr.state)
             print("self.current_state: {}".format(self.current_state))
             self.achieved_goal = self.current_state
             self.current_reward = sr.reward
             print("Current_reward: {}".format(self.current_reward))
+            if self.first:
+                self.goal = self.current_state
+                self.first = False
             '''
             policy_output = self.model.get_actions(self.current_state, self.goal,
                                                    compute_Q=self.compute_Q,
@@ -231,8 +234,11 @@ class RolloutWorker:
             return
 
     def sample_goal(self, init_config):
+        # init_config: ImageSpacePoseMsg
         # check dimensions of goal
-        return 0
+        # goal_shape = init_config.shape # Can't do this, init_config
+        print("What's inside init_config?: {}".format(init_config))
+        return init_config
 
     def init_object_position(self):
         # how to get keyboard stuff
@@ -315,7 +321,7 @@ class RolloutWorker:
                     self.init_config_pub_.publish(self.current_config)
                     # TODO: How should I generate goals?
                     # TODO: self.goal should be filled here.
-                    #self.g = self.sample_goal(self.current_config) #TODO: Need to check the dimension of goal
+                    self.g = self.sample_goal(self.current_config) #TODO: Need to check the dimension of goal
                     self.goal_config_pub_.publish(self.g)
                     self.initialized = True
             # if reset_flag:

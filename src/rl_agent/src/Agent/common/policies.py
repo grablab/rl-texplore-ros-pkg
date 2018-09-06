@@ -176,7 +176,6 @@ class PolicyWithValue(object):
                 inpt = self.__dict__[inpt_name]
                 if isinstance(inpt, tf.Tensor) and inpt._op.type == 'Placeholder':
                     feed_dict[inpt] = adjust_shape(inpt, data)
-
         return sess.run(variables, feed_dict)
 
     def step(self, observation, **extra_feed):
