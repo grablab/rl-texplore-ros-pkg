@@ -67,18 +67,28 @@ def learn(model, runner, nenvs, nsteps, replay_start, replay_ratio, total_timest
             n = np.random.poisson(replay_ratio)
             for _ in range(n):
                 acer.call(on_policy=False)  # no rollout with T42 in this
-
     return model
 
 def save_episode(episode, i):
     obs = episode['o']
     print(obs)
-    SAVE_DIR = "/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/data_init_goal/original"
+    SAVE_DIR = "/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/data-init-goal/original"
     file_path = os.path.join(SAVE_DIR, 'episode_'+str(i)+'.out')
     obs_reshaped = np.squeeze(obs)
     np.savetxt(file_path, obs_reshaped, delimiter=',')
 
-def collect_rl_data(runner):
+def save_episode_keyboard(episode, i):
+    obs = episode['o'][0]
+    actions = episode['u'][0]
+    print("In save_episode_keyboard...obs.shape: {}, u.shape: {}".format(obs.shape, actions.shape))
+    obs_actions_combined = np.concatenate((obs, actions), axis=1)
+    SAVE_DIR = "/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/data-init-goal/keyboard_demo"
+    file_path = os.path.join(SAVE_DIR, 'episode_'+str(i)+'.out')
+    obs_actions_combined = np.squeeze(obs_actions_combined)
+    np.savetxt(file_path, obs_actions_combined, delimiter=',')
+
+
+def collect_random_rl_data(runner):
     i = 1
     while True:
         print("Episode: {}".format(i))
@@ -88,6 +98,19 @@ def collect_rl_data(runner):
             continue
         save_episode(episode, i)
         i += 1
+
+def record_demonstration_w_keyboard(runner):
+    i = 1
+    while True:
+        print("Episode: {}".format(i))
+        # Do I need to limit the number of rollouts?
+        episode = runner.generate_rollouts_w_keyboard()
+        if episode['drop'][0][0][0] == 1 or episode['stuck'][0][0][0] == 1:
+            print("Drop happened at time step 1. Ignoring this episode...")
+            continue
+        save_episode_keyboard(episode, i)
+        i += 1
+
 
 if __name__ == '__main__':
     rospy.init_node(NODE)
@@ -134,7 +157,8 @@ if __name__ == '__main__':
     print(model)
     print('gggggggggggg')
 
-    rollout_worker = RolloutWorker(model, dims, num_rollouts, use_target_net=True, compute_Q=True, random_eps=random_eps)
+    record_demo_data_w_keyboard=True
+    rollout_worker = RolloutWorker(model, dims, num_rollouts, use_target_net=True, compute_Q=True, random_eps=random_eps, record_demo_data_w_keyboard=True)
 
     # n_batches = 10 #2
     demo_file = '/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/data/demodata.npy'
@@ -142,7 +166,10 @@ if __name__ == '__main__':
     replay_start = 2 # 1000  # int, the sampling from the replay buffer does not start until replay buffer has at least that many samples
     replay_ratio = 4  # int, how many (on averages) batches of data fo sample from the replay buffer take after batch from the environment
 
-    #collect_rl_data(runner=rollout_worker)
+    #collect_random_rl_data(runner=rollout_worker)
+    record_demonstration_w_keyboard(runner=rollout_worker)
 
+    '''
     learn(model=model, runner=rollout_worker, nenvs=nenvs, nsteps=nsteps, replay_start=replay_start,
          replay_ratio=replay_ratio, total_timesteps=total_timesteps)
+    '''

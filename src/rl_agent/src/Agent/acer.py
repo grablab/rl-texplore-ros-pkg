@@ -4,6 +4,8 @@ from utils import cat_entropy, mse, find_trainable_variables, Scheduler
 from utils import get_by_index, q_explained_variance
 from utils import cat_entropy_softmax, check_shape, batch_to_seq, seq_to_batch
 
+from collections import deque
+
 from her import make_sample_her_transitions
 from replay_buffer_her import ReplayBuffer
 
@@ -265,6 +267,8 @@ class Acer():
         self.tstart = None
         #self.episode_stats = EpisodeStats(runner.nsteps, runner.nenv)
         self.steps = None
+        self.success_history = deque()
+        self.reward_history = deque()
 
     def sample_trajectory_on_policy(self, episode_batch, nsteps):
         nsteps += 1
@@ -326,6 +330,11 @@ class Acer():
                 obs[i], goals[i], actions[i], rewards[i], mus[i], dones[i] = self.sample_trajectory_on_policy(episode, model.nsteps)
                 # obs[i], actions[i], rewards[i], mus[i], dones[i] = episode['o'], episode['u'], episode['r'], episode['mu'], episode['done']
                 i += 1
+            # Record stats: this is assuming that I fill up dones and rewards till the end even if rollout terminates earlier.
+            self.success_history.append(np.mean(dones[:, -1]))
+            self.reward_history.append(np.mean(rewards[:, -1]))
+            # TODO: Decide what threshold I should use to determine "success" for each episode. See self.dones in state_reward_callback in rollout.py
+            # ToDO: Specifically, finish self.is_success() function.
         else:
             transitions = model.sample_batch(model.nenvs, model.nsteps)
             # I shouldn't have any o_2 thing here. It's some old stuff from HER+DDPG

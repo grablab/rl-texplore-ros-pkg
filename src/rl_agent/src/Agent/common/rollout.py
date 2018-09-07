@@ -5,18 +5,23 @@ import rospy
 from collections import deque
 import auto_data_collector.keyboard_encodings as ENC
 
+from sklearn.neighbors import NearestNeighbors
+
 import time
+import glob
+from pandas import DataFrame
 
 from std_srvs.srv import SetBool
 from rl_msgs.msg import RLStateReward, RLAction
 from common_msgs_gl.srv import SendInt
-from std_msgs.msg import Int32, UInt32
+from std_msgs.msg import Int32, UInt32, Int32MultiArray
 from std_msgs.msg import Bool
 from std_msgs.msg import Float32MultiArray
 from marker_tracker.msg import ImageSpacePoseMsg
 from utils import convert_episode_to_batch_major
 
 ACT_CMDS = ['up', 'down', 'left', 'right', 'left up', 'left down', 'right up', 'right down', 'stop']
+ACT_CMDS_DIC = {'up':0, 'down':1, 'left':2, 'right':3, 'left up':4, 'left down':5, 'right up':6, 'right down':7, 'stop':8}
 
 ########## config for object resetter ############
 
@@ -39,19 +44,34 @@ seconds_until_next_reset = 8
 class RolloutWorker:
     def __init__(self, model, dims, num_rollouts, rollout_batch_size=1,
                  exploit=False, use_target_net=False, compute_Q=False, noise_eps=0.0,
-                 random_eps=0.0, marker_space_markers=[0,1,2,3,4,5,6,7]):
+                 random_eps=0.0, marker_space_markers=[0,1,2,3,4,5,6,7], record_demo_data_w_keyboard=False):
         """
         :param policy (class instance): the policy that is used to act
         :param dims (dict of ints): the dimensions for observations (o) and actions (u)
         :param rollout_batch_size (int): the number of parallel rollouts that should be used
         """
         self.first = True
+        self.record_demo_data_w_keyboard = record_demo_data_w_keyboard
+        if self.record_demo_data_w_keyboard:
+            self.keyboard_input = 'stop'
+            rospy.Subscriber('/keyboard_input', UInt32, self.keyboard_callback)
+            self.contact_point_object_left = None
+            self.contact_point_object_right = None
+            rospy.Subscriber('contact_point_detector/contact_point_object_left', Int32MultiArray, self.contact_point_object_left_callback)
+            rospy.Subscriber('contact_point_detector/contact_point_object_right', Int32MultiArray, self.contact_point_object_right_callback)
+
         self.num_rollouts = num_rollouts
         self.model = model; self.dims = dims; self.rollout_batch_size=rollout_batch_size;
         self.exploit = exploit; self.use_target_net = use_target_net; self.compute_Q = compute_Q
         self.noise_eps = noise_eps; self.random_eps = random_eps
         self.marker_space_markers = marker_space_markers
         self.current_config = None
+
+        # Goal sampling
+        self.prepare_for_goal_sampling()
+
+        # Stats
+        self.success_history = deque()
 
         # For initializing hand/object configuration
         self.keyboardDict = ENC.Encodings
@@ -121,7 +141,6 @@ class RolloutWorker:
 
         print('self.model.nbatch: {}'.format(self.model.nbatch))
 
-
     def enable_data_save(self, req):
         self.enable = req.data
         if self.enable == True:
@@ -130,7 +149,7 @@ class RolloutWorker:
         return [self.enable, "Successfully changed enable bool"]
 
     def marker_tracker_callback(self, data):
-        ids = sorted(self.marker_space_markers)
+        ids = sorted(self.marker_space_markers + [8, 9]) # [8,9] are for contact points
         x = [0 for _ in range(len(ids))]
         y = [0 for _ in range(len(ids))]
         angles = [0. for _ in range(len(ids))]
@@ -140,6 +159,9 @@ class RolloutWorker:
             x[id_] = pos_x
             y[id_] = pos_y
             angles[id_] = angle
+        x[8] = self.contact_point_object_left[0]; x[9] = self.contact_point_object_right[0]
+        y[8] = self.contact_point_object_left[1]; y[9] = self.contact_point_object_right[1]
+        angles[8] = 0; angles[9] = 0
         ispm = ImageSpacePoseMsg()
         ispm.ids, ispm.posx, ispm.posy, ispm.angles = ids, x, y, angles
         self.current_config = ispm
@@ -193,6 +215,18 @@ class RolloutWorker:
         print("system_state callback: {}".format(data.data))
         self.system_state = data.data
 
+    def is_success(self, obs, goal):
+        # go through each value of obs and goal to determine success
+        obs = np.array(obs)
+        goal = np.array(goal)
+        print("In is_success, obs.shape: {}, goal.shape: {}".format(obs.shape, goal.shape))
+        pos_diff = np.linalg.norm(obs[:6]-goal[:6])
+        angle_diff = np.linalg.norm(obs[6:9]-goal[6:9])
+        contact_point_diff = np.linalg.norm(obs[9:13]-goal[9:13])
+        # TODO : I think I should have a different threshold for each pos/angle/contact_point_diff to determine success
+        # TODo: Make sure that I fill up the succcess array (or done array) with 1s if it returns 1 earlier than the end of the episode.
+        return 0
+
     def state_reward_callback(self, sr):
         print("Is this called at all?????????????????????????????")
         if not self.terminated:
@@ -219,7 +253,7 @@ class RolloutWorker:
             print("in state_reward_callback, actions[0]: {}".format(actions[0]))
             self.current_action = actions[0]
             self.mus = mus
-            self.current_done = 0 # dones should come from env
+            self.current_done = self.is_success(self.current_state, self.goal) # 0 # dones should come from env
             '''
             if self.compute_Q:
                 sampled_action, self.Q = policy_output
@@ -233,12 +267,85 @@ class RolloutWorker:
         else:
             return
 
+    def prepare_for_goal_sampling(self):
+        def get_init_state(episode):
+            mean = episode.iloc[:, :-1].mean()
+            first_5 = episode.iloc[:5, :-1]
+            min_id = abs(first_5 - mean).sum(axis=1).idxmin()
+            #print(min_id)
+            init_config = episode.iloc[min_id, :-1]
+            # print(init_config)
+            return init_config
+
+        def get_goal_state(episode):
+            mean = episode.iloc[:, :-1].mean()
+            last_5 = episode.iloc[-5:, :-1]
+            min_id = abs(last_5 - mean).sum(axis=1).idxmin()
+            #print(min_id)
+            #print(len(episode))
+            goal_config = episode.iloc[min_id, :-1]
+            # print(goal_config)
+            return goal_config
+        n_files = len(glob.glob("/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/data-init-goal/keyboard_demo_20180907/*"))
+        self.init_config_mat = np.empty([n_files, 13])
+        self.init_goal_pair_list = []
+        # for i in sorted(os.listdir(data_dir)):
+        for i, f in enumerate(
+                sorted(glob.glob("/home/grablab/grablab-ros/src/external/rl-texplore-ros-pkg/src/rl_agent/src/Agent/data-init-goal/keyboard_demo_20180907/*"), key=lambda s: int(s.split('_', 4)[-1].split('.')[0]))):
+            # print(i)
+            # f = os.path.join(data_dir, i)
+            a = DataFrame(np.loadtxt(f, delimiter=','))
+            # deleting rows with all zeros
+            df = a[(a.T != 0).any()]
+            df = df.drop(df.index[(
+                        df[2].eq(0) | df[3].eq(0) | df[0].eq(0) | df[1].eq(0) | df[4].eq(0) | df[5].eq(0) | df[9].eq(
+                    0) | df[10].eq(0) | df[11].eq(0) | df[12].eq(0))])
+            df.index = range(len(df))
+
+            # just add init and goal setter here
+            init_state = get_init_state(df)
+            goal_state = get_goal_state(df)
+            self.init_goal_pair_list.append((init_state, goal_state))
+            self.init_config_mat[i, :] = init_state
+
+        #self.init_config_mat =  # get this from a file
+        #self.init_goal_pair_list = # get also this from a file
+        print("init_config_mat is prepared. shape: {}, last row: {}".format(self.init_config_mat.shape, self.init_config_mat[n_files-1,:]))
+        self.nbrs = NearestNeighbors(n_neighbors=1, algorithm='ball_tree').fit(self.init_config_mat)
+
+    def prepare_init_goal_state(self, config_msg):
+        # config_msg : ImageSpacePoseMsg
+        init_config = [config_msg.posx[0], config_msg.posy[0], config_msg.posx[2], config_msg.posy[2], config_msg.posx[4], config_msg.posy[4],
+        config_msg.angles[0], config_msg.angles[2], config_msg.angles[4], config_msg.posx[8], config_msg.posy[8], config_msg.posx[9], config_msg.posy[9]]
+        return init_config
+
+    def list2imgmsg(self, list_data):
+        ispm = ImageSpacePoseMsg()
+        ids = sorted(self.marker_space_markers + [8, 9]) # [8,9] are for contact points
+        x = [0 for _ in range(len(ids))]
+        y = [0 for _ in range(len(ids))]
+        angles = [0. for _ in range(len(ids))]
+        x[0] = list_data[0]; x[2] = list_data[2]; x[4] = list_data[4]
+        y[0] = list_data[1]; y[2] = list_data[3]; y[4] = list_data[5]
+        angles[0] = list_data[6]; angles[2] = list_data[7]; angles[4] = list_data[8]
+        x[8] = list_data[9]; y[8] = list_data[10]
+        x[9] = list_data[11]; y[9] = list_data[12]
+        ispm.ids, ispm.posx, ispm.posy, ispm.angles = ids, x, y, angles
+        return ispm
+
     def sample_goal(self, init_config):
         # init_config: ImageSpacePoseMsg
         # check dimensions of goal
         # goal_shape = init_config.shape # Can't do this, init_config
-        print("What's inside init_config?: {}".format(init_config))
-        return init_config
+        print("What's inside init_config_msg?: {}".format(init_config))
+        # The kneighbors expects init_config as numpy 2D array
+        #init_config = self.prepare_config_state(init_config_msg)
+
+        distances, indices = self.nbrs.kneighbors(np.array(init_config).reshape(1,-1))
+        idx = int(np.squeeze(indices))
+        goal_config = self.init_goal_pair_list[idx][1] # it's a pair (init, goal)
+        #TODO: Change init_config to goal_config once I finish prepare_config_state
+        return goal_config
 
     def init_object_position(self):
         # how to get keyboard stuff
@@ -276,6 +383,116 @@ class RolloutWorker:
         #else:
         #    return False
 
+    def contact_point_object_left_callback(self, data):
+        self.contact_point_object_left = data.data
+
+    def contact_point_object_right_callback(self, data):
+        self.contact_point_object_right = data.data
+
+    def generate_rollouts_w_keyboard(self):
+        # generate episodes
+        obs, acts, rewards, values, dones, mus, drops = [], [], [], [], [], [], []
+        achieved_goals, goals, stucks = [], [], []
+
+        rate = rospy.Rate(5)
+
+        episode = dict(o=None, u=None, drop=None, stuck=None)
+        self.count_random_action_sent = 0
+        while not rospy.is_shutdown():
+            # Let the hand move
+            #print("system_state: {}, self.enable: {}, self.initialized: {}, self.count_random_action_sent: {}".format(self.system_state, self.enable, self.initialized, self.count_random_action_sent))
+            if self.count_random_action_sent < 5 and self.system_state==2:
+                if self.count_random_action_sent == 1:
+                    self.g = self.current_config
+                self.init_object_position()
+                if self.count_random_action_sent == 5:
+                    print("Initialization Done")
+                    self.fake_keyboard_pub_.publish(self.keyboardDict["KEY_S_"])
+                    print("printing current_config: {}".format(self.current_config))
+                    current_config_state = self.current_config
+                    self.init_config_pub_.publish(current_config_state)
+                    init_config_state = self.prepare_init_goal_state(current_config_state)
+                    # Now init_config_state has contact point info.
+                    self.g = self.sample_goal(init_config_state)
+                    goal_img_msg = self.list2imgmsg(self.g)
+                    self.goal_config_pub_.publish(goal_img_msg)
+                    self.initialized = True
+            if self.enable and self.initialized:
+                # I think I can just add that config
+                # I don't need to add the self.current action stuff; I just need to collect marker position and contact positions
+                # What's inside self.current_config?
+                # Preprocess self.current_config
+                #printing current_config: ids: [0, 1, 2, 3, 4, 5, 6, 7]
+                #posx: [530, 496, 743, 779, 621, 521, 754, 0]
+                #posy: [158, 265, 161, 275, 189, 494, 508, 0]
+                #angles: [2.0344439357957027, 1.501939837493852, 1.174714885230589, 1.6553400823078948, 1.760276484676044, 1.6199370612109167, 1.6525807074128926, 0.0]
+                # I should look at Krishnan's script to see how he recorded the keyboard control action
+                print("Waiting for the action from keyboard....")
+                u = ACT_CMDS_DIC[self.keyboard_input]
+                if u == 8:
+                    print("action command: {}".format(u))
+                    continue
+                else:
+                    print("action command: {}".format(u))
+                    acts.append(np.expand_dims([u], 0))
+                    print("contact_point object left: {}".format(self.contact_point_object_left))
+                    print("contact_point object right: {}".format(self.contact_point_object_right))
+                    current_state = [self.current_config.posx[0], self.current_config.posy[0], self.current_config.posx[2], self.current_config.posy[2],
+                                   self.current_config.posx[4], self.current_config.posy[4],
+                                   self.current_config.angles[0], self.current_config.angles[2], self.current_config.angles[4],
+                                   self.contact_point_object_left[0], self.contact_point_object_left[1],
+                                   self.contact_point_object_right[0], self.contact_point_object_right[1]]
+                    obs.append(np.expand_dims(np.array(current_state), 0))
+                if self.is_dropped_ or self.is_stuck_ or self.reset_to_save_motors == True:
+                    drops.append(np.expand_dims(np.array([int(self.is_dropped_)]), 0))
+                    stucks.append(np.expand_dims(np.array([int(self.is_stuck_ or self.reset_to_save_motors)]), 0))
+
+                    if self.is_dropped_:
+                        print("Dropped Object")
+                        rospy.loginfo("Dropped Object")
+                    if self.is_stuck_ or self.reset_to_save_motors == True:
+                        print("Got stuck!!!!")
+                        rospy.loginfo("Stuck Object")
+                        self.reset_to_save_motors == False
+
+                    self.resetObject()
+                    # prepare episode
+                    print("Returning an episode....")
+                    episode['o'], episode['u'], episode['drop'], episode['stuck'] = obs, acts, drops, stucks
+                    return convert_episode_to_batch_major(episode)
+                else:
+                    drops.append(np.expand_dims(np.array([int(self.is_dropped_)]), 0))
+                    stucks.append(np.expand_dims(np.array([int(self.is_stuck_ or self.reset_to_save_motors)]), 0))
+
+            rate.sleep()
+
+
+    def keyboard_callback(self, data):
+        # print("keyboard data : {}".format(data.data))
+        # TODO: Convert data 115 to str (such as stop, left etc)
+        # (Find where the mapping is)
+        if data.data == 113:
+            self.keyboard_input = 'left up'
+        elif data.data == 119:
+            self.keyboard_input = 'up'
+        elif data.data == 101:
+            self.keyboard_input = 'right up'
+        elif data.data == 97:
+            self.keyboard_input = 'left'
+        elif data.data == 115:
+            self.keyboard_input = 'stop'
+        elif data.data == 100:
+            self.keyboard_input = 'right'
+        elif data.data == 122:
+            self.keyboard_input = 'left down'
+        elif data.data == 120:
+            self.keyboard_input = 'down'
+        elif data.data == 99:
+            self.keyboard_input = 'right down'
+        else:
+            print('Error: Keyboard input is invalid: {}'.format(data.data))
+
+
     def generate_rollouts(self):
         """Performs 'rollout_batch_size' rollouts in parallel for time horizon 'T' with the current policy
          acting on it accordingly.
@@ -295,7 +512,7 @@ class RolloutWorker:
 
         # generate episodes
         obs, acts, rewards, values, dones, mus, drops = [], [], [], [], [], [], []
-        achieved_goals, successes, goals, stucks = [], [], [], []
+        achieved_goals, goals, stucks = [], [], []
 
         episode = dict(o=None, u=None, r=None, done=None, mu=None, ag=None, drop=None, g=None, stuck=None)
         Qs = []
@@ -318,11 +535,13 @@ class RolloutWorker:
                     # initial_config = PointArray()
                     # initial_config.x = []
                     print("printing current_config: {}".format(self.current_config))
-                    self.init_config_pub_.publish(self.current_config)
-                    # TODO: How should I generate goals?
-                    # TODO: self.goal should be filled here.
-                    self.g = self.sample_goal(self.current_config) #TODO: Need to check the dimension of goal
-                    self.goal_config_pub_.publish(self.g)
+                    current_config_state = self.current_config
+                    self.init_config_pub_.publish(current_config_state)
+                    init_config_state = self.prepare_init_goal_state(current_config_state)
+                    # Now init_config_state has contact point info.
+                    self.g = self.sample_goal(init_config_state)
+                    goal_img_msg = self.list2imgmsg(self.g)
+                    self.goal_config_pub_.publish(goal_img_msg)
                     self.initialized = True
             # if reset_flag:
             if self.enable and self.initialized:
@@ -339,7 +558,7 @@ class RolloutWorker:
                     one_hot_action = np.zeros(self.dims['u'])
                     one_hot_action[self.current_action] = 1.0
                     # acts.append(np.expand_dims(one_hot_action, 0))
-                    acts.append(np.expand_dims([self.dims['u']], 0))
+                    acts.append(np.expand_dims([self.current_action], 0))
                     mus.append(self.mus)
                     # rewards.append(np.expand_dims(np.array([self.current_reward]), 0))
                     dones.append(np.expand_dims(np.array([self.current_done]), 0))
@@ -366,6 +585,7 @@ class RolloutWorker:
                         # TODO: I should fill out the np array thing if the length of the array is not full.
                         episode['o'], episode['u'], episode['r'], episode['done'] = obs, acts, rewards, dones
                         episode['mu'], episode['ag'], episode['drop'], episode['g'], episode['stuck'] = mus, achieved_goals, drops, goals, stucks
+
                         if not self.is_episode_shape_ok(episode):
                             episode = self.fill_episode_with_zeros(episode)
                         return convert_episode_to_batch_major(episode)
