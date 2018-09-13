@@ -73,7 +73,7 @@ class RolloutWorker:
         # building graph for planner
         self.graph = {}
         if os.path.exists(saved_graph):
-            gpl.pickle.load(open(saved_graph, 'rb'))
+            self.graph = gpl.load_graph(saved_graph)
         if os.path.exists(traj_data_dir) and len(glob.glob(os.path.join(traj_data_dir, '*.csv'))):
             self.graph = gpl.build_graph(graph=self.graph, csv_path=traj_data_dir, add_neighbors=True)
 
