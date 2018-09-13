@@ -4,6 +4,8 @@ from random import randint
 import rospy
 from collections import deque
 import auto_data_collector.keyboard_encodings as ENC
+import graph_planner as gpl
+import os, pickle
 
 from sklearn.neighbors import NearestNeighbors
 
@@ -44,7 +46,8 @@ seconds_until_next_reset = 8
 class RolloutWorker:
     def __init__(self, model, dims, num_rollouts, rollout_batch_size=1,
                  exploit=False, use_target_net=False, compute_Q=False, noise_eps=0.0,
-                 random_eps=0.0, marker_space_markers=[0,1,2,3,4,5,6,7], record_demo_data_w_keyboard=False):
+                 random_eps=0.0, marker_space_markers=[0,1,2,3,4,5,6,7], record_demo_data_w_keyboard=False,
+                 saved_graph="graph_out.pkl", traj_data_dir="./original/"):
         """
         :param policy (class instance): the policy that is used to act
         :param dims (dict of ints): the dimensions for observations (o) and actions (u)
@@ -66,6 +69,13 @@ class RolloutWorker:
         self.noise_eps = noise_eps; self.random_eps = random_eps
         self.marker_space_markers = marker_space_markers
         self.current_config = None
+
+        # building graph for planner
+        self.graph = {}
+        if os.path.exists(saved_graph):
+            gpl.pickle.load(open(saved_graph, 'rb'))
+        if os.path.exists(traj_data_dir) and len(glob.glob(os.path.join(traj_data_dir, '*.csv'))):
+            self.graph = gpl.build_graph(graph=self.graph, csv_path=traj_data_dir, add_neighbors=True)
 
         # Goal sampling
         self.prepare_for_goal_sampling()
@@ -398,6 +408,7 @@ class RolloutWorker:
 
         episode = dict(o=None, u=None, drop=None, stuck=None)
         self.count_random_action_sent = 0
+        cs = None
         while not rospy.is_shutdown():
             # Let the hand move
             #print("system_state: {}, self.enable: {}, self.initialized: {}, self.count_random_action_sent: {}".format(self.system_state, self.enable, self.initialized, self.count_random_action_sent))
@@ -443,10 +454,24 @@ class RolloutWorker:
                                    self.contact_point_object_left[0], self.contact_point_object_left[1],
                                    self.contact_point_object_right[0], self.contact_point_object_right[1]]
                     obs.append(np.expand_dims(np.array(current_state), 0))
+                    l, r = gpl.get_discretized_obj_coord(current_state)
+                    cs_next = self.graph.get((l, r), gpl.ContactState(l, r, self.graph))
+                    if cs:
+                        cs.add_edge_to(cs_next)
+                        cs_next.add_edge_from(cs)
+
                 if self.is_dropped_ or self.is_stuck_ or self.reset_to_save_motors == True:
+                    if self.is_reset_to_save_motors_:
+                        cs_next._in[cs] = -1
+                        cs._out[cs_next] = -1
+                    elif self.is_stuck_:
+                        cs_next._in[cs] = -2
+                        cs._out[cs_next] = -2
+                    elif self.is_dropped_:
+                        cs_next._in[cs] = -3
+                        cs._out[cs_next] = -3
                     drops.append(np.expand_dims(np.array([int(self.is_dropped_)]), 0))
                     stucks.append(np.expand_dims(np.array([int(self.is_stuck_ or self.reset_to_save_motors)]), 0))
-
                     if self.is_dropped_:
                         print("Dropped Object")
                         rospy.loginfo("Dropped Object")
@@ -463,7 +488,7 @@ class RolloutWorker:
                 else:
                     drops.append(np.expand_dims(np.array([int(self.is_dropped_)]), 0))
                     stucks.append(np.expand_dims(np.array([int(self.is_stuck_ or self.reset_to_save_motors)]), 0))
-
+                cs = cs_next
             rate.sleep()
 
 
@@ -540,6 +565,8 @@ class RolloutWorker:
                     init_config_state = self.prepare_init_goal_state(current_config_state)
                     # Now init_config_state has contact point info.
                     self.g = self.sample_goal(init_config_state)
+                    init_disc, goal_disc = gpl.get_discretized_obj_coord(init_disc), gpl.get_discretized_obj_coord(self.g)
+                    path = gpl.find_path(self.graph[init_disc], self.graph[goal_disc], classifier=None)  # TODO: @krishnan add self.classifier here
                     goal_img_msg = self.list2imgmsg(self.g)
                     self.goal_config_pub_.publish(goal_img_msg)
                     self.initialized = True
